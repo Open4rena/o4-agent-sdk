@@ -1,0 +1,21 @@
+[package]
+name = "o4-agent-sdk"
+description = "Async Rust SDK for controlling an o4-agent-runtime process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures-core.workspace = true
+o4-agent-protocol = { path = "../o4-agent-protocol" }
+semver.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde.workspace = true

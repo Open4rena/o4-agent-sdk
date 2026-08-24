@@ -1,0 +1,12 @@
+[package]
+name = "o4-agent-protocol"
+description = "Versioned JSONL wire types for the standalone o4 agent runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
