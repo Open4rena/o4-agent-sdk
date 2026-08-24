@@ -10,8 +10,8 @@ use std::time::Duration;
 use futures_core::Stream;
 use o4_agent_protocol::{
     Command, Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig, Reasoning,
-    RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, Usage,
-    DEFAULT_RUNTIME_VERSION_REQUIREMENT, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
+    RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, Usage, SDK_CAPABILITIES,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
 use semver::{Version, VersionReq};
 use serde_json::Value;
@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::error::{Error, Result};
 use crate::transport::{Transport, TransportSource};
+use crate::DEFAULT_RUNTIME_VERSION_REQUIREMENT;
 
 const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const EVENT_BUFFER_CAPACITY: usize = 256;

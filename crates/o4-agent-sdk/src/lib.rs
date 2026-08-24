@@ -16,7 +16,9 @@ pub use error::{Error, Result, RuntimeDiagnostics};
 pub use o4_agent_protocol as protocol;
 pub use o4_agent_protocol::{
     Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig, Reasoning, RunStatus,
-    SandboxMode, Usage, DEFAULT_RUNTIME_VERSION_REQUIREMENT, PROTOCOL_VERSION, SDK_CAPABILITIES,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    SandboxMode, Usage, PROTOCOL_VERSION, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
+
+/// Runtime versions compatible with this SDK release by default.
+pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <0.1.0";

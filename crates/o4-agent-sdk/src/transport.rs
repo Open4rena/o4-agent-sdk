@@ -98,6 +98,7 @@ impl TransportSource for Arc<dyn Transport> {
 #[derive(Clone)]
 pub struct LocalRuntime {
     path: PathBuf,
+    data_dir: Option<PathBuf>,
     stderr_limit: usize,
 }
 
@@ -105,8 +106,16 @@ impl LocalRuntime {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
+            data_dir: None,
             stderr_limit: DEFAULT_STDERR_LIMIT,
         }
+    }
+
+    /// Use this directory for durable runtime session state instead of the
+    /// runtime's default `~/.o4` directory.
+    pub fn data_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.data_dir = Some(path.into());
+        self
     }
 
     pub fn stderr_limit(mut self, bytes: usize) -> Self {
@@ -123,6 +132,7 @@ impl fmt::Debug for LocalRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LocalRuntime")
             .field("path", &self.path)
+            .field("data_dir", &self.data_dir)
             .field("stderr_limit", &self.stderr_limit)
             .finish()
     }
@@ -139,6 +149,9 @@ impl TransportSource for LocalRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(data_dir) = self.data_dir {
+            command.env("O4_AGENT_RUNTIME_DATA_DIR", data_dir);
+        }
 
         let mut child = command.spawn().map_err(|error| Error::Transport {
             message: format!("could not launch runtime: {error}"),

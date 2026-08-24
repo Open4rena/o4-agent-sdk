@@ -19,3 +19,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 serde.workspace = true
+tempfile = "3"

@@ -138,7 +138,7 @@ fn memory_pair(diagnostics: impl Into<String>) -> (MemoryTransport, RuntimePeer,
     )
 }
 
-async fn handshake(peer: &mut RuntimePeer) {
+async fn handshake_with_version(peer: &mut RuntimePeer, runtime_version: &str) {
     let request = peer.request().await;
     assert_eq!(request.protocol_version, PROTOCOL_VERSION);
     match request.command {
@@ -160,7 +160,7 @@ async fn handshake(peer: &mut RuntimePeer) {
         None,
         None,
         Event::RuntimeReady(RuntimeReady {
-            runtime_version: "1.2.3".into(),
+            runtime_version: runtime_version.into(),
             supported_protocol_versions: vec![PROTOCOL_VERSION],
             capabilities: vec![
                 "event.unknown".into(),
@@ -170,6 +170,10 @@ async fn handshake(peer: &mut RuntimePeer) {
             ],
         }),
     );
+}
+
+async fn handshake(peer: &mut RuntimePeer) {
+    handshake_with_version(peer, "0.0.57").await;
 }
 
 async fn auto_runtime(mut peer: RuntimePeer, commands: Arc<Mutex<Vec<Command>>>) {
@@ -315,6 +319,40 @@ async fn handshake_rejects_protocol_version_mismatch() {
 }
 
 #[tokio::test]
+async fn default_runtime_requirement_accepts_pinned_runtime() {
+    let (transport, peer, _) = memory_pair("");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let runtime = tokio::spawn(auto_runtime(peer, Arc::clone(&commands)));
+
+    let client = Client::connect(transport).await.unwrap();
+    assert_eq!(client.runtime_info().runtime_version.to_string(), "0.0.57");
+    client.shutdown().await.unwrap();
+    runtime.await.unwrap();
+}
+
+#[tokio::test]
+async fn default_runtime_requirement_rejects_older_and_next_major_runtimes() {
+    for version in ["0.0.56", "0.1.0"] {
+        let (transport, mut peer, _) = memory_pair("");
+        let runtime_version = version.to_owned();
+        let runtime =
+            tokio::spawn(async move { handshake_with_version(&mut peer, &runtime_version).await });
+
+        let error = Client::connect(transport).await.unwrap_err();
+        assert!(matches!(
+            error,
+            Error::RuntimeVersionIncompatible {
+                version: rejected,
+                requirement
+            } if rejected == version
+                && requirement.contains(">=0.0.57")
+                && requirement.contains("<0.1.0")
+        ));
+        runtime.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn runtime_semver_range_and_capabilities_are_separate_checks() {
     let (transport, mut peer, _) = memory_pair("");
     let runtime = tokio::spawn(async move { handshake(&mut peer).await });
@@ -326,7 +364,7 @@ async fn runtime_semver_range_and_capabilities_are_separate_checks() {
     assert!(matches!(
         error,
         Error::RuntimeVersionIncompatible { version, requirement }
-            if version == "1.2.3" && requirement.contains(">=2.0.0")
+            if version == "0.0.57" && requirement.contains(">=2.0.0")
     ));
     runtime.await.unwrap();
 

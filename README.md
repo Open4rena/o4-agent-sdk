@@ -33,9 +33,9 @@ The current contract is:
 
 - protocol version: **v1** (`PROTOCOL_VERSION`)
 - SDK-supported protocols: **`[1]`** (`SUPPORTED_PROTOCOL_VERSIONS`)
-- default runtime semver requirement: **`>=0.0.0`** (`DEFAULT_RUNTIME_VERSION_REQUIREMENT`)
+- default runtime semver requirement: **`>=0.0.57, <0.1.0`** (`DEFAULT_RUNTIME_VERSION_REQUIREMENT`)
 
-The default semver floor is deliberately permissive so the SDK can connect to any protocol-v1 runtime; the authoritative runtime pin lives in [`compatibility.toml`](compatibility.toml), which records the exact o4 runtime commit and version this SDK was built and verified against. Applications that need a hard guarantee can pin a stricter range themselves:
+The SDK defaults to the compatible runtime release line recorded in [`compatibility.toml`](compatibility.toml), which also pins the exact o4 runtime commit and version this SDK was built and verified against. Applications can override the range when deliberately targeting another compatible runtime:
 
 ```rust,no_run
 use o4_agent_sdk::ClientOptions;
