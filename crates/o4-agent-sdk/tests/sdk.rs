@@ -169,6 +169,9 @@ async fn handshake_with_version(peer: &mut RuntimePeer, runtime_version: &str) {
                 "run.steer".into(),
                 "session.resume".into(),
             ],
+            // This fake runtime advertises no daemon surface, which is the
+            // case every existing test here exercises.
+            daemon: None,
         }),
     );
 }
@@ -263,6 +266,12 @@ async fn auto_runtime(mut peer: RuntimePeer, commands: Arc<Mutex<Vec<Command>>>)
                 break;
             }
             Command::Initialize { .. } => panic!("initialize was sent more than once"),
+            // This fake models the non-daemon surface only, and advertises no
+            // daemon capability (`daemon: None` at the handshake). The SDK
+            // must therefore never send one of these to it. Panic rather than
+            // ignore: a silent arm here would let a capability-gating bug pass
+            // as a green test.
+            other => panic!("fake runtime received an unsupported command: {other:?}"),
         }
     }
 }
@@ -303,6 +312,7 @@ async fn handshake_rejects_protocol_version_mismatch() {
                 runtime_version: "1.0.0".into(),
                 supported_protocol_versions: vec![2],
                 capabilities: vec![],
+                daemon: None,
             }),
         );
     });
@@ -907,6 +917,7 @@ async fn policy_and_mcp_use_exact_wire_fields_and_debug_redacts_values() {
         sandbox_mode: SandboxMode::WorkspaceWrite,
         sandbox_config: Some(json!({"writable_roots": ["workspace"]})),
         allowed_domains: vec!["docs.example.com".into()],
+        interactive_approvals: false,
     };
     let session = client
         .create_session(

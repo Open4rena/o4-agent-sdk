@@ -94,6 +94,9 @@ async fn durable_context_survives_two_distinct_runtime_processes() {
         sandbox_mode: SandboxMode::WorkspaceWrite,
         sandbox_config: None,
         allowed_domains: Vec::new(),
+        // Off, so the run never parks waiting for an answer this test cannot
+        // give (daemon-core R3.3).
+        interactive_approvals: false,
     };
 
     let first_client = Client::connect(LocalRuntime::new(&binary).data_dir(data_dir.path()))
