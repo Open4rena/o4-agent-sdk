@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use o4_agent_sdk::protocol::{
     AgentStarted, ApprovalDecision, ApprovalRequested, Command, CommandAck, Context, ErrorEvent,
     Event, EventEnvelope, ExecutionPolicy, McpServerConfig, MessageEvent, OwnerWire,
-    RequestEnvelope, RunCompleted, RunStarted, RunStatus, RuntimeReady, SandboxMode, SessionEvent,
-    SessionListed, SessionSummary, SteeringInjected, Usage, WarningEvent, WorkActionKind,
-    WorkActioned, WorkChanged, WorkListed,
+    RequestEnvelope, RunCompleted, RunDrained, RunStarted, RunStatus, RuntimeReady, SandboxMode,
+    SessionEvent, SessionListed, SessionOwnershipReported, SessionSummary, SteeringInjected, Usage,
+    WarningEvent, WorkActionKind, WorkActioned, WorkChanged, WorkListed,
 };
 use o4_agent_sdk::{
     ApprovalOutcome, Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions,
@@ -1659,4 +1659,154 @@ async fn the_approval_stream_is_handed_out_once() {
     // Splitting requests between two readers would mean some go unanswered,
     // and an unanswered request parks its run.
     assert!(client.approvals().await.is_err());
+}
+
+// --- Phase 5: drain and ownership -------------------------------------------
+
+/// Handshake advertising the handover capabilities. No shipping runtime does
+/// this yet; the fake stands in for one that will.
+async fn handshake_with_handover(peer: &mut RuntimePeer) {
+    let request = peer.request().await;
+    peer.send(
+        &request.request_id,
+        None,
+        None,
+        Event::RuntimeReady(RuntimeReady {
+            runtime_version: "0.2.25".into(),
+            supported_protocol_versions: vec![PROTOCOL_VERSION],
+            capabilities: vec![
+                "event.unknown".into(),
+                "run.cancel".into(),
+                "run.steer".into(),
+                "session.resume".into(),
+                "run_drain".into(),
+                "session_ownership".into(),
+            ],
+            daemon: None,
+        }),
+    );
+}
+
+#[tokio::test]
+async fn draining_reports_where_the_journal_ended() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_handover(&mut peer).await;
+        for expected_now in [false, true] {
+            let request = peer.request().await;
+            let Command::RunDrain {
+                ref session_id,
+                now,
+            } = request.command
+            else {
+                panic!("expected run_drain, got {:?}", request.command);
+            };
+            assert_eq!(session_id, "s-1");
+            assert_eq!(now, expected_now);
+            peer.send(
+                &request.request_id,
+                None,
+                None,
+                Event::RunDrained(RunDrained {
+                    journal_sequence: if now { 9 } else { 4 },
+                    journal_hash: "h".into(),
+                }),
+            );
+        }
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    assert_eq!(
+        client
+            .drain_run("s-1", false)
+            .await
+            .unwrap()
+            .journal_sequence,
+        4
+    );
+    assert_eq!(
+        client
+            .drain_run("s-1", true)
+            .await
+            .unwrap()
+            .journal_sequence,
+        9
+    );
+    runtime.await.unwrap();
+}
+
+#[tokio::test]
+async fn reporting_ownership_carries_the_owner_and_its_generation() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_handover(&mut peer).await;
+        let request = peer.request().await;
+        let Command::SessionOwnership {
+            ref session_id,
+            owner,
+            owner_generation,
+        } = request.command
+        else {
+            panic!("expected session_ownership, got {:?}", request.command);
+        };
+        assert_eq!(session_id, "s-1");
+        assert_eq!(owner, OwnerWire::Platform);
+        assert_eq!(owner_generation, 7);
+        peer.send(
+            &request.request_id,
+            None,
+            None,
+            Event::SessionOwnershipReported(SessionOwnershipReported {
+                owner: OwnerWire::Platform,
+                owner_generation: 7,
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let reported = client
+        .report_ownership("s-1", OwnerWire::Platform, 7)
+        .await
+        .unwrap();
+    runtime.await.unwrap();
+    assert_eq!(reported.owner, OwnerWire::Platform);
+    assert_eq!(reported.owner_generation, 7);
+}
+
+/// What actually happens today. No shipping runtime advertises either
+/// capability, so both calls refuse before reaching the wire. This is the
+/// honest state of the feature, and it will start failing -- usefully -- when
+/// a runtime implements them and this test's fake stops matching reality.
+#[tokio::test]
+async fn handover_refuses_against_every_runtime_that_exists_today() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await; // everything o4 really offers
+        peer
+    });
+    let client = Client::connect(transport).await.unwrap();
+    let mut peer = runtime.await.unwrap();
+
+    let error = client.drain_run("s-1", false).await.unwrap_err();
+    assert!(
+        matches!(&error, Error::MissingCapability { capability } if capability == "run_drain"),
+        "unexpected error: {error:?}"
+    );
+    let error = client
+        .report_ownership("s-1", OwnerWire::Local, 1)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::MissingCapability { capability }
+            if capability == "session_ownership"),
+        "unexpected error: {error:?}"
+    );
+    assert!(peer.requests.try_recv().is_err(), "no frame may be sent");
+
+    // And they are absent from what the SDK reports as usable.
+    let usable = client.daemon_capabilities();
+    assert!(!usable.iter().any(|c| c == "run_drain"));
+    assert!(!usable.iter().any(|c| c == "session_ownership"));
 }

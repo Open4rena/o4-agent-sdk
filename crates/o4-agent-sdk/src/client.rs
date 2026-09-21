@@ -10,9 +10,9 @@ use std::time::Duration;
 use futures_core::Stream;
 use o4_agent_protocol::{
     capabilities, ApprovalDecision, ApprovalRequested, Command, Context, Event, EventEnvelope,
-    ExecutionPolicy, McpServerConfig, Reasoning, RequestEnvelope, RunCompleted, RunStatus,
-    RuntimeReady, SessionSummary, Usage, WorkActionKind, WorkChanged, WorkListed, SDK_CAPABILITIES,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    ExecutionPolicy, McpServerConfig, OwnerWire, Reasoning, RequestEnvelope, RunCompleted,
+    RunDrained, RunStatus, RuntimeReady, SessionOwnershipReported, SessionSummary, Usage,
+    WorkActionKind, WorkChanged, WorkListed, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use semver::{Version, VersionReq};
 use serde_json::Value;
@@ -45,6 +45,8 @@ const DAEMON_CAPABILITIES: &[&str] = &[
     capabilities::WORK_REGISTRY,
     capabilities::WORK_ACTION,
     capabilities::INTERACTIVE_APPROVALS,
+    capabilities::RUN_DRAIN,
+    capabilities::SESSION_OWNERSHIP,
 ];
 
 /// Connection and compatibility policy.
@@ -522,6 +524,74 @@ impl Client {
                 reason: "the approval stream was already taken".into(),
             })?;
         Ok(ApprovalStream { requests: receiver })
+    }
+
+    /// Quiesce a session's active run, so its journal can be sealed.
+    ///
+    /// `now` asks the runtime to stop at the next safe point rather than
+    /// letting the turn finish. The reply reports where the journal ended,
+    /// which is what a handover is sealed against.
+    ///
+    /// No runtime advertises `run_drain` yet, so today this always fails with
+    /// [`Error::MissingCapability`]. It exists so an application can be
+    /// written against the wire contract that already defines it.
+    pub async fn drain_run(&self, session_id: impl Into<String>, now: bool) -> Result<RunDrained> {
+        self.require_capability(capabilities::RUN_DRAIN)?;
+        let envelope = self
+            .request_terminal(
+                Command::RunDrain {
+                    session_id: session_id.into(),
+                    now,
+                },
+                PendingKind::RunDrain,
+            )
+            .await?;
+        match envelope.event {
+            Event::RunDrained(drained) => Ok(drained),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "run_drain terminated with `{}` instead of `run_drained`",
+                    other.event_type()
+                ),
+            }),
+        }
+    }
+
+    /// Report an ownership change that has already been committed elsewhere.
+    ///
+    /// This tells the runtime what happened; it does not ask it to transfer
+    /// anything. `owner_generation` is the caller's fencing token, so a stale
+    /// report cannot overwrite a newer one.
+    ///
+    /// No runtime advertises `session_ownership` yet, so today this always
+    /// fails with [`Error::MissingCapability`].
+    pub async fn report_ownership(
+        &self,
+        session_id: impl Into<String>,
+        owner: OwnerWire,
+        owner_generation: i64,
+    ) -> Result<SessionOwnershipReported> {
+        self.require_capability(capabilities::SESSION_OWNERSHIP)?;
+        let envelope = self
+            .request_terminal(
+                Command::SessionOwnership {
+                    session_id: session_id.into(),
+                    owner,
+                    owner_generation,
+                },
+                PendingKind::SessionOwnership,
+            )
+            .await?;
+        match envelope.event {
+            Event::SessionOwnershipReported(reported) => Ok(reported),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "session_ownership terminated with `{}` instead of \
+                     `session_ownership_reported`",
+                    other.event_type()
+                ),
+            }),
+        }
     }
 
     /// Create a session, run one prompt to completion, then unload the session.
@@ -1128,6 +1198,8 @@ enum PendingKind {
     SessionDetach,
     WorkList,
     WorkAction,
+    RunDrain,
+    SessionOwnership,
     Run,
     CommandAck,
     Shutdown,
@@ -1147,6 +1219,8 @@ impl PendingKind {
                     | (Self::SessionDetach, Event::SessionDetached(_))
                     | (Self::WorkList, Event::WorkListed(_))
                     | (Self::WorkAction, Event::WorkActioned(_))
+                    | (Self::RunDrain, Event::RunDrained(_))
+                    | (Self::SessionOwnership, Event::SessionOwnershipReported(_))
                     | (Self::Run, Event::RunCompleted(_))
                     | (Self::CommandAck, Event::CommandAck(_))
                     | (Self::Shutdown, Event::CommandAck(_))
