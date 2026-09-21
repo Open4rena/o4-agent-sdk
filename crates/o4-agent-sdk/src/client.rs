@@ -148,14 +148,27 @@ impl SessionOptions {
     }
 }
 
-/// Options that may be changed while resuming durable session state.
+/// Options supplied while resuming durable session state.
+///
+/// Only `context` changes anything. A resumed session keeps
+/// the working directory it was created in: that directory is recorded in the
+/// immutable session definition and is what the runtime rebuilds the session
+/// from, so it cannot be relocated by resuming.
 #[derive(Clone, Default)]
 pub struct ResumeOptions {
+    /// Asserts the directory the session was created in; it does not move it.
     pub cwd: Option<PathBuf>,
     pub context: Option<Context>,
 }
 
 impl ResumeOptions {
+    /// Assert the directory this session was created in.
+    ///
+    /// This is a guard, not an override. Resuming fails with
+    /// `session_resume_failed` when the path does not match the recorded
+    /// directory, so a caller that has the wrong directory is told instead of
+    /// silently getting a session rooted somewhere it did not expect. Leave it
+    /// unset to accept whatever directory the session was created in.
     pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
         self
