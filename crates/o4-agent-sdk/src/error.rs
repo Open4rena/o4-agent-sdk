@@ -82,6 +82,17 @@ pub enum Error {
     #[error("runtime is missing required capabilities: {missing:?}")]
     MissingCapabilities { missing: Vec<String> },
 
+    /// A daemon-surface call was made against a runtime that does not advertise
+    /// the capability backing it.
+    ///
+    /// Raised before anything is written to the transport, so it can never be
+    /// confused with a runtime rejection or a connection failure. One variant
+    /// carrying the capability name rather than one variant per capability:
+    /// the runtime gains capabilities over time, and a new enum variant each
+    /// time is a breaking change for anyone matching exhaustively.
+    #[error("runtime does not advertise the `{capability}` capability")]
+    MissingCapability { capability: String },
+
     #[error("runtime handshake timed out")]
     HandshakeTimeout,
 

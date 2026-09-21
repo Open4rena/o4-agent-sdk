@@ -9,14 +9,15 @@ mod error;
 mod transport;
 
 pub use client::{
-    Client, ClientOptions, ResumeOptions, RunHandle, RunOptions, RunResult, RuntimeInfo, Session,
-    SessionOptions,
+    AttachedSession, Client, ClientOptions, ResumeOptions, RunHandle, RunOptions, RunResult,
+    RuntimeInfo, Session, SessionOptions,
 };
 pub use error::{Error, Result, RuntimeDiagnostics};
 pub use o4_agent_protocol as protocol;
 pub use o4_agent_protocol::{
     Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig, Reasoning, RunStatus,
-    SandboxMode, Usage, PROTOCOL_VERSION, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
+    SandboxMode, SessionSummary, Usage, PROTOCOL_VERSION, SDK_CAPABILITIES,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 

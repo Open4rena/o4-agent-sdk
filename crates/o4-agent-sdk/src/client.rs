@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use futures_core::Stream;
 use o4_agent_protocol::{
-    Command, Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig, Reasoning,
-    RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, Usage, SDK_CAPABILITIES,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    capabilities, Command, Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig,
+    Reasoning, RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, SessionSummary, Usage,
+    SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use semver::{Version, VersionReq};
 use serde_json::Value;
@@ -26,6 +26,12 @@ use crate::DEFAULT_RUNTIME_VERSION_REQUIREMENT;
 
 const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const EVENT_BUFFER_CAPACITY: usize = 256;
+/// Buffer for one attachment's fan-out. An attached observer does not drive
+/// the session it is watching, so a reader that falls behind must drop events
+/// rather than stall the connection every other session shares.
+const ATTACHMENT_EVENT_BUFFER: usize = 256;
+/// The capabilities this SDK knows how to use, for `daemon_capabilities`.
+const DAEMON_CAPABILITIES: &[&str] = &[capabilities::SESSION_LIST, capabilities::SESSION_ATTACH];
 
 /// Connection and compatibility policy.
 #[derive(Clone, Debug)]
@@ -325,6 +331,90 @@ impl Client {
             .expect("a connected Client always has runtime information")
     }
 
+    /// Daemon capabilities this runtime advertised at the handshake.
+    ///
+    /// Use it to decide what to offer before calling; every daemon method
+    /// below fails with [`Error::MissingCapability`] rather than guessing.
+    pub fn daemon_capabilities(&self) -> Vec<String> {
+        let advertised = self.runtime_info().capabilities;
+        DAEMON_CAPABILITIES
+            .iter()
+            .filter(|capability| advertised.iter().any(|entry| entry == *capability))
+            .map(|capability| (*capability).to_owned())
+            .collect()
+    }
+
+    fn require_capability(&self, capability: &str) -> Result<()> {
+        if self
+            .runtime_info()
+            .capabilities
+            .iter()
+            .any(|entry| entry == capability)
+        {
+            return Ok(());
+        }
+        Err(Error::MissingCapability {
+            capability: capability.to_owned(),
+        })
+    }
+
+    /// List the sessions the runtime currently hosts.
+    ///
+    /// Includes sessions this client did not create. Each summary carries the
+    /// session's recorded `cwd`: choosing a session to attach to is choosing a
+    /// working directory, so it is part of the identity rather than a detail.
+    pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
+        self.require_capability(capabilities::SESSION_LIST)?;
+        let envelope = self
+            .request_terminal(Command::SessionList, PendingKind::SessionList)
+            .await?;
+        match envelope.event {
+            Event::SessionListed(listed) => Ok(listed.sessions),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "session_list terminated with `{}` instead of `session_listed`",
+                    other.event_type()
+                ),
+            }),
+        }
+    }
+
+    /// Attach to a hosted session and observe its events.
+    ///
+    /// Attaching is a view: it does not transfer ownership, and it cannot
+    /// widen the session's `ExecutionPolicy` -- the policy the session was
+    /// created with governs it for life.
+    pub async fn attach_session(&self, session_id: impl Into<String>) -> Result<AttachedSession> {
+        self.require_capability(capabilities::SESSION_ATTACH)?;
+        let session_id = session_id.into();
+
+        // Register before sending: the runtime may fan out an event for this
+        // session between its reply and our next instruction, and an event
+        // arriving with nowhere to go would fail the connection.
+        let (sender, receiver) = mpsc::channel(ATTACHMENT_EVENT_BUFFER);
+        self.inner.register_attachment(&session_id, sender);
+
+        let attached = self
+            .request_terminal(
+                Command::SessionAttach {
+                    session_id: session_id.clone(),
+                },
+                PendingKind::SessionAttach,
+            )
+            .await;
+        if let Err(error) = attached {
+            self.inner.remove_attachment(&session_id);
+            return Err(error);
+        }
+
+        Ok(AttachedSession {
+            inner: Arc::clone(&self.inner),
+            session_id,
+            events: receiver,
+            detached: false,
+        })
+    }
+
     /// Create a session, run one prompt to completion, then unload the session.
     pub async fn run(
         &self,
@@ -594,6 +684,93 @@ impl Session {
     }
 }
 
+/// A hosted session this client is observing but does not own.
+///
+/// Dropping it detaches. The runtime keeps fanning events at an attachment
+/// until told otherwise, so a handle that goes away without saying so leaves
+/// the runtime talking to nobody; `Drop` sends the detach so the common case
+/// cannot leak. Call [`AttachedSession::detach`] to observe the result.
+pub struct AttachedSession {
+    inner: Arc<Inner>,
+    session_id: String,
+    events: mpsc::Receiver<EventEnvelope>,
+    detached: bool,
+}
+
+impl AttachedSession {
+    pub fn id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Next event for this session, or `None` once detached.
+    pub async fn next_event(&mut self) -> Option<EventEnvelope> {
+        self.events.recv().await
+    }
+
+    /// Stop observing. The session itself is untouched and keeps running.
+    pub async fn detach(mut self) -> Result<()> {
+        self.detach_inner().await
+    }
+
+    async fn detach_inner(&mut self) -> Result<()> {
+        if self.detached {
+            return Ok(());
+        }
+        self.detached = true;
+        self.inner.remove_attachment(&self.session_id);
+        let client = Client {
+            inner: Arc::clone(&self.inner),
+        };
+        let envelope = client
+            .request_terminal(
+                Command::SessionDetach {
+                    session_id: self.session_id.clone(),
+                },
+                PendingKind::SessionDetach,
+            )
+            .await?;
+        match envelope.event {
+            Event::SessionDetached(_) => Ok(()),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "session_detach terminated with `{}` instead of `session_detached`",
+                    other.event_type()
+                ),
+            }),
+        }
+    }
+}
+
+impl Drop for AttachedSession {
+    fn drop(&mut self) {
+        if self.detached {
+            return;
+        }
+        self.detached = true;
+        // Stop claiming events synchronously, so anything already in flight
+        // stops being delivered the moment the handle is gone.
+        self.inner.remove_attachment(&self.session_id);
+
+        // Telling the runtime needs the wire, which needs an executor we may
+        // not be on. Best-effort: if there is no runtime to spawn onto, the
+        // local table is already cleared and the worst case is the runtime
+        // fanning at an attachment this client now ignores.
+        let inner = Arc::clone(&self.inner);
+        let session_id = self.session_id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let client = Client { inner };
+                let _ = client
+                    .request_terminal(
+                        Command::SessionDetach { session_id },
+                        PendingKind::SessionDetach,
+                    )
+                    .await;
+            });
+        }
+    }
+}
+
 /// Streaming handle for one active run.
 ///
 /// It implements [`Stream`] with typed [`EventEnvelope`] items and also offers
@@ -715,6 +892,9 @@ enum PendingKind {
     SessionCreate,
     SessionResume,
     SessionClose,
+    SessionList,
+    SessionAttach,
+    SessionDetach,
     Run,
     CommandAck,
     Shutdown,
@@ -729,6 +909,9 @@ impl PendingKind {
                     | (Self::SessionCreate, Event::SessionCreated(_))
                     | (Self::SessionResume, Event::SessionResumed(_))
                     | (Self::SessionClose, Event::SessionClosed(_))
+                    | (Self::SessionList, Event::SessionListed(_))
+                    | (Self::SessionAttach, Event::SessionAttached(_))
+                    | (Self::SessionDetach, Event::SessionDetached(_))
                     | (Self::Run, Event::RunCompleted(_))
                     | (Self::CommandAck, Event::CommandAck(_))
                     | (Self::Shutdown, Event::CommandAck(_))
@@ -814,6 +997,18 @@ impl RunControl {
 struct Inner {
     transport: Arc<dyn Transport>,
     pending: Mutex<HashMap<String, PendingRequest>>,
+    /// Sinks for events that belong to an attached session rather than to a
+    /// request this client sent, keyed by session id.
+    ///
+    /// Every other event is answered traffic: the runtime replies with the
+    /// `request_id` we gave it, and `route` matches it back. Attachment breaks
+    /// that, by design -- the point is to observe a session someone else is
+    /// driving -- so the runtime fans those events out carrying the
+    /// *originating* client's `request_id`, or an empty one for events it
+    /// raised itself (`agent_runtime.rs`, `emit`). Neither is a request of
+    /// ours, so without this table the first fanned-out event would be an
+    /// unknown-`request_id` protocol violation and would fail the connection.
+    attachments: Mutex<HashMap<String, mpsc::Sender<EventEnvelope>>>,
     next_request_id: AtomicU64,
     terminal_error: Mutex<Option<Error>>,
     runtime_info: Mutex<Option<RuntimeInfo>>,
@@ -830,6 +1025,7 @@ impl Inner {
         Self {
             transport,
             pending: Mutex::new(HashMap::new()),
+            attachments: Mutex::new(HashMap::new()),
             next_request_id: AtomicU64::new(1),
             terminal_error: Mutex::new(None),
             runtime_info: Mutex::new(None),
@@ -899,10 +1095,44 @@ impl Inner {
         Ok(receiver)
     }
 
+    /// Deliver a fanned-out event to its attachment, if we have one.
+    ///
+    /// Returns whether the event was claimed. A full or closed channel still
+    /// counts as claimed: the event is for that attachment either way, and a
+    /// slow or dropped reader must not escalate into a connection-wide
+    /// protocol violation.
+    fn route_to_attachment(&self, envelope: &EventEnvelope) -> bool {
+        let Some(session_id) = envelope.session_id.as_deref() else {
+            return false;
+        };
+        let attachments = lock(&self.attachments);
+        let Some(sender) = attachments.get(session_id) else {
+            return false;
+        };
+        let _ = sender.try_send(envelope.clone());
+        true
+    }
+
+    fn register_attachment(&self, session_id: &str, sender: mpsc::Sender<EventEnvelope>) {
+        lock(&self.attachments).insert(session_id.to_owned(), sender);
+    }
+
+    fn remove_attachment(&self, session_id: &str) {
+        lock(&self.attachments).remove(session_id);
+    }
+
     fn route(&self, envelope: EventEnvelope) -> Result<()> {
         let request_id = envelope.request_id.clone();
         let mut pending = lock(&self.pending);
         let Some(request) = pending.get(&request_id) else {
+            // Not answering a request of ours. If it names a session we are
+            // attached to, it is fan-out and belongs to that attachment;
+            // otherwise the runtime is talking about something we never asked
+            // for, which stays a protocol violation.
+            drop(pending);
+            if self.route_to_attachment(&envelope) {
+                return Ok(());
+            }
             return Err(Error::ProtocolViolation {
                 reason: format!(
                     "runtime emitted an event for unknown request_id `{}`",
@@ -1078,7 +1308,12 @@ fn validate_envelope(
             runtime_supported: vec![envelope.protocol_version],
         });
     }
-    if envelope.request_id.is_empty() {
+    // An empty `request_id` is the runtime emitting on its own behalf rather
+    // than answering anyone -- approvals it raised, work it noticed. That is
+    // only meaningful for a session, and `route` decides whether we are
+    // attached to it. Unattached, it stays a violation: nothing else in the
+    // protocol may arrive unaddressed.
+    if envelope.request_id.is_empty() && envelope.session_id.is_none() {
         return Err(Error::ProtocolViolation {
             reason: "event request_id is empty".into(),
         });

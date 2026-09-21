@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use o4_agent_sdk::protocol::{
     AgentStarted, Command, CommandAck, Context, Event, EventEnvelope, ExecutionPolicy,
-    McpServerConfig, MessageEvent, RequestEnvelope, RunCompleted, RunStarted, RunStatus,
-    RuntimeReady, SandboxMode, SessionEvent, SteeringInjected, Usage, WarningEvent,
+    McpServerConfig, MessageEvent, OwnerWire, RequestEnvelope, RunCompleted, RunStarted, RunStatus,
+    RuntimeReady, SandboxMode, SessionEvent, SessionListed, SessionSummary, SteeringInjected,
+    Usage, WarningEvent,
 };
 use o4_agent_sdk::{
     Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions, RuntimeDiagnostics,
@@ -1040,5 +1041,239 @@ fn compatibility_pin_matches_compiled_default() {
     assert!(
         requirement.matches(&verified),
         "verified runtime {verified} must satisfy the pinned range {pinned_requirement}"
+    );
+}
+
+// --- Phase 2: daemon capabilities, session listing, attach/detach -----------
+
+/// Handshake advertising the daemon capabilities this SDK knows how to use.
+async fn handshake_with_daemon(peer: &mut RuntimePeer) {
+    let request = peer.request().await;
+    peer.send(
+        &request.request_id,
+        None,
+        None,
+        Event::RuntimeReady(RuntimeReady {
+            runtime_version: "0.2.25".into(),
+            supported_protocol_versions: vec![PROTOCOL_VERSION],
+            capabilities: vec![
+                "event.unknown".into(),
+                "run.cancel".into(),
+                "run.steer".into(),
+                "session.resume".into(),
+                "session_list".into(),
+                "session_attach".into(),
+            ],
+            daemon: None,
+        }),
+    );
+}
+
+#[tokio::test]
+async fn daemon_calls_fail_before_the_wire_when_the_capability_is_absent() {
+    let (transport, mut peer, _) = memory_pair("");
+    // The default fake advertises no daemon capability.
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        peer
+    });
+    let client = Client::connect(transport).await.unwrap();
+    let mut peer = runtime.await.unwrap();
+
+    let error = client.list_sessions().await.unwrap_err();
+    assert!(
+        matches!(&error, Error::MissingCapability { capability } if capability == "session_list"),
+        "unexpected error: {error:?}"
+    );
+    let error = match client.attach_session("whatever").await {
+        Ok(_) => panic!("attach must fail without the capability"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(&error, Error::MissingCapability { capability } if capability == "session_attach"),
+        "unexpected error: {error:?}"
+    );
+
+    // R2.1 is specifically that nothing reaches the transport: a capability
+    // error must be distinguishable from a runtime rejection.
+    assert!(
+        peer.requests.try_recv().is_err(),
+        "a capability-gated call must not send a frame"
+    );
+    assert!(client.daemon_capabilities().is_empty());
+}
+
+#[tokio::test]
+async fn listing_reports_hosted_sessions_with_their_directories() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        let request = peer.request().await;
+        assert!(matches!(request.command, Command::SessionList));
+        peer.send(
+            &request.request_id,
+            None,
+            None,
+            Event::SessionListed(SessionListed {
+                sessions: vec![SessionSummary {
+                    session_id: "hosted-1".into(),
+                    session_uuid: None,
+                    cwd: "/work/api".into(),
+                    model: Some("m".into()),
+                    title: None,
+                    created_at: "2026-01-01T00:00:00Z".into(),
+                    last_activity_at: "2026-01-01T00:00:01Z".into(),
+                    active_run: None,
+                    attached_clients: 0,
+                    owner: OwnerWire::Local,
+                    owner_generation: 0,
+                }],
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let sessions = client.list_sessions().await.unwrap();
+    runtime.await.unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "hosted-1");
+    // R3.6: the directory is part of the session's identity.
+    assert_eq!(sessions[0].cwd, "/work/api");
+    assert_eq!(
+        client.daemon_capabilities(),
+        vec!["session_list".to_owned(), "session_attach".to_owned()]
+    );
+}
+
+/// The reason this phase needed a routing change at all.
+///
+/// The runtime fans a session's events at every attached client carrying the
+/// *originating* request id, or an empty one for events it raised itself. An
+/// attached observer sent neither. Before the attachment table, the first such
+/// event was an unknown-`request_id` protocol violation that failed the whole
+/// connection.
+#[tokio::test]
+async fn attached_sessions_receive_fanout_that_answers_no_request_of_ours() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        let request = peer.request().await;
+        assert!(matches!(
+            request.command,
+            Command::SessionAttach { ref session_id } if session_id == "hosted-1"
+        ));
+        peer.send(
+            &request.request_id,
+            Some("hosted-1"),
+            None,
+            Event::SessionAttached(SessionEvent::default()),
+        );
+        // Fan-out addressed to nothing we sent: empty request id, and a
+        // request id belonging to some other client.
+        peer.send(
+            "",
+            Some("hosted-1"),
+            None,
+            Event::MessageCompleted(MessageEvent {
+                message: json!({"role": "assistant"}),
+            }),
+        );
+        peer.send(
+            "some-other-clients-request",
+            Some("hosted-1"),
+            None,
+            Event::MessageCompleted(MessageEvent {
+                message: json!({"role": "assistant"}),
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let mut attached = client.attach_session("hosted-1").await.unwrap();
+    runtime.await.unwrap();
+
+    assert_eq!(attached.id(), "hosted-1");
+    for _ in 0..2 {
+        let event = attached.next_event().await.expect("fanned-out event");
+        assert!(matches!(event.event, Event::MessageCompleted(_)));
+    }
+    // The connection survived: it can still serve an ordinary request.
+    assert!(client
+        .runtime_info()
+        .capabilities
+        .iter()
+        .any(|c| c == "session_list"));
+}
+
+#[tokio::test]
+async fn an_unattached_unaddressed_event_is_still_a_protocol_violation() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        // Nothing is attached, so this is the runtime talking about a session
+        // we never asked about. Relaxing the rule for attachments must not
+        // relax it in general.
+        peer.send(
+            "",
+            Some("not-attached"),
+            None,
+            Event::MessageCompleted(MessageEvent {
+                message: json!({"role": "assistant"}),
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    runtime.await.unwrap();
+
+    // The violation fails the connection, so the next call surfaces it.
+    let error = client.list_sessions().await.unwrap_err();
+    assert!(
+        matches!(&error, Error::ProtocolViolation { .. }),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn dropping_an_attachment_detaches_without_disturbing_the_session() {
+    let (transport, mut peer, _) = memory_pair("");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&commands);
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        let attach = peer.request().await;
+        seen.lock().unwrap().push(attach.command.clone());
+        peer.send(
+            &attach.request_id,
+            Some("hosted-1"),
+            None,
+            Event::SessionAttached(SessionEvent::default()),
+        );
+        let detach = peer.request().await;
+        seen.lock().unwrap().push(detach.command.clone());
+        peer.send(
+            &detach.request_id,
+            Some("hosted-1"),
+            None,
+            Event::SessionDetached(SessionEvent::default()),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let attached = client.attach_session("hosted-1").await.unwrap();
+    drop(attached);
+    runtime.await.unwrap();
+
+    let commands = commands.lock().unwrap();
+    assert!(matches!(commands[0], Command::SessionAttach { .. }));
+    assert!(
+        matches!(&commands[1], Command::SessionDetach { session_id } if session_id == "hosted-1"),
+        "dropping an attachment must tell the runtime: {:?}",
+        commands[1]
     );
 }
