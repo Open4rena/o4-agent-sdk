@@ -14,9 +14,9 @@ with in [`compatibility.toml`](compatibility.toml):
 
 ```toml
 runtime_commit = "<o4 repo commit providing o4-agent-runtime>"
-runtime_version = "0.0.57"
+runtime_version = "0.2.25"
 protocol_version = 1
-runtime_version_requirement = ">=0.0.57, <0.1.0"
+runtime_version_requirement = ">=0.0.57, <0.3.0"
 ```
 
 Compatibility rests on three axes, all enforced at connection time:

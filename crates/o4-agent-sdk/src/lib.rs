@@ -21,4 +21,8 @@ pub use o4_agent_protocol::{
 pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 
 /// Runtime versions compatible with this SDK release by default.
-pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <0.1.0";
+///
+/// Keep this in step with `runtime_version_requirement` in
+/// `compatibility.toml`; `compatibility_pin_matches_compiled_default` fails if
+/// the two drift apart.
+pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <0.3.0";

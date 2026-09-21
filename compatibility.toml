@@ -5,14 +5,18 @@
 # and verified against. Update them deliberately when the runtime changes.
 
 # The o4 repository commit that provides the matching o4-agent-runtime binary.
-runtime_commit = "dd283ba920d51175321fb7ba5d49a826581af708"
+runtime_commit = "323cb2baeb040b0630e518868d4357d33bea16bd"
 
 # The o4 runtime version at that commit.
-runtime_version = "0.0.57"
+runtime_version = "0.2.25"
 
 # The JSONL wire protocol version implemented by both sides.
 protocol_version = 1
 
 # Semver constraint the SDK applies to the runtime at handshake in addition to
-# protocol and capability negotiation.
-runtime_version_requirement = ">=0.0.57, <0.1.0"
+# protocol and capability negotiation. The ceiling is the next runtime minor
+# after the verified one: 0.x releases move fast and stay protocol-v1 additive,
+# so the range spans the whole verified line rather than a single patch, and
+# stops before an unreviewed 0.3. Must equal
+# `DEFAULT_RUNTIME_VERSION_REQUIREMENT` in crates/o4-agent-sdk/src/lib.rs.
+runtime_version_requirement = ">=0.0.57, <0.3.0"

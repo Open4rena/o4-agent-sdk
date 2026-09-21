@@ -11,7 +11,8 @@ use o4_agent_sdk::protocol::{
 };
 use o4_agent_sdk::{
     Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions, RuntimeDiagnostics,
-    SessionOptions, Transport, TransportError, PROTOCOL_VERSION,
+    SessionOptions, Transport, TransportError, DEFAULT_RUNTIME_VERSION_REQUIREMENT,
+    PROTOCOL_VERSION,
 };
 use semver::VersionReq;
 use serde_json::{json, Value};
@@ -332,7 +333,7 @@ async fn default_runtime_requirement_accepts_pinned_runtime() {
 
 #[tokio::test]
 async fn default_runtime_requirement_rejects_older_and_next_major_runtimes() {
-    for version in ["0.0.56", "0.1.0"] {
+    for version in ["0.0.56", "0.3.0"] {
         let (transport, mut peer, _) = memory_pair("");
         let runtime_version = version.to_owned();
         let runtime =
@@ -346,7 +347,7 @@ async fn default_runtime_requirement_rejects_older_and_next_major_runtimes() {
                 requirement
             } if rejected == version
                 && requirement.contains(">=0.0.57")
-                && requirement.contains("<0.1.0")
+                && requirement.contains("<0.3.0")
         ));
         runtime.await.unwrap();
     }
@@ -988,4 +989,45 @@ async fn abstract_transport_connects_without_process_or_pty_assumptions() {
     // handle nor terminal/PTY operations.
     assert!(state.closed.load(Ordering::Acquire));
     assert!(!state.aborted.load(Ordering::Acquire));
+}
+
+/// `compatibility.toml` documents the pin; `DEFAULT_RUNTIME_VERSION_REQUIREMENT`
+/// is what the handshake actually enforces. Nothing generates one from the
+/// other, so they can drift silently -- and did: the file kept saying
+/// `<0.1.0` while the runtime shipped 0.2.x, which only surfaced as an e2e
+/// handshake rejection. Compare them directly, and require that the verified
+/// `runtime_version` satisfies the range it is pinned alongside.
+#[test]
+fn compatibility_pin_matches_compiled_default() {
+    let manifest = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compatibility.toml"),
+    )
+    .expect("read compatibility.toml");
+
+    let field = |key: &str| -> String {
+        manifest
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key} = ")))
+            .unwrap_or_else(|| panic!("{key} present in compatibility.toml"))
+            .trim()
+            .trim_matches('"')
+            .to_owned()
+    };
+
+    let pinned_requirement = field("runtime_version_requirement");
+    assert_eq!(
+        pinned_requirement, DEFAULT_RUNTIME_VERSION_REQUIREMENT,
+        "compatibility.toml and the compiled default must state the same range"
+    );
+
+    let verified: semver::Version = field("runtime_version")
+        .parse()
+        .expect("runtime_version is semver");
+    let requirement: semver::VersionReq = pinned_requirement
+        .parse()
+        .expect("runtime_version_requirement is a semver range");
+    assert!(
+        requirement.matches(&verified),
+        "verified runtime {verified} must satisfy the pinned range {pinned_requirement}"
+    );
 }

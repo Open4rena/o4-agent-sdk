@@ -67,8 +67,10 @@ The SDK versions **independently** of o4. Read and follow
 - Compatibility with a runtime is declared in `compatibility.toml`
   (`runtime_version`, `runtime_commit`, `protocol_version`,
   `runtime_version_requirement`) and enforced at handshake.
-- The default requirement `>=0.0.57, <0.1.0` is compiled in as
-  `DEFAULT_RUNTIME_VERSION_REQUIREMENT`.
+- The default requirement `>=0.0.57, <0.3.0` is compiled in as
+  `DEFAULT_RUNTIME_VERSION_REQUIREMENT`. It must equal
+  `runtime_version_requirement` in `compatibility.toml`; nothing generates one
+  from the other, so `compatibility_pin_matches_compiled_default` guards it.
 - Bump the SDK version only on public-API or protocol change. Re-pin the
   runtime only after verifying against a newer `o4-agent-runtime`.
 
