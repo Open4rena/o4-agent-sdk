@@ -3,7 +3,7 @@
 The o4 Agent SDK versions independently of the o4 CLI/runtime.
 
 The SDK and the runtime are separate artifacts with separate release cycles.
-The SDK's version (this workspace, currently `0.2.0`) tracks only the SDK's own
+The SDK's version (this workspace, currently `0.3.0`) tracks only the SDK's own
 public API and the wire protocol. It is **not** tied to o4's version number,
 which moves on a much faster, patch-per-fix cadence.
 

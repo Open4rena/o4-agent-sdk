@@ -11,7 +11,7 @@ use futures_core::Stream;
 use o4_agent_protocol::{
     capabilities, Command, Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig,
     Reasoning, RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, SessionSummary, Usage,
-    SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
+    WorkActionKind, WorkChanged, WorkListed, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use semver::{Version, VersionReq};
 use serde_json::Value;
@@ -30,8 +30,16 @@ const EVENT_BUFFER_CAPACITY: usize = 256;
 /// the session it is watching, so a reader that falls behind must drop events
 /// rather than stall the connection every other session shares.
 const ATTACHMENT_EVENT_BUFFER: usize = 256;
+/// Buffer for one work watcher. Notices are hints to re-list, so a slow
+/// watcher drops them rather than stalling the shared connection.
+const WORK_CHANGE_BUFFER: usize = 64;
 /// The capabilities this SDK knows how to use, for `daemon_capabilities`.
-const DAEMON_CAPABILITIES: &[&str] = &[capabilities::SESSION_LIST, capabilities::SESSION_ATTACH];
+const DAEMON_CAPABILITIES: &[&str] = &[
+    capabilities::SESSION_LIST,
+    capabilities::SESSION_ATTACH,
+    capabilities::WORK_REGISTRY,
+    capabilities::WORK_ACTION,
+];
 
 /// Connection and compatibility policy.
 #[derive(Clone, Debug)]
@@ -415,6 +423,77 @@ impl Client {
         })
     }
 
+    /// Snapshot the runtime's work registry: every run, tool call, and
+    /// sub-agent it is tracking, with the counts behind them.
+    ///
+    /// Asking also subscribes this connection to [`Client::watch_work`]
+    /// notifications, which is how the runtime works: it starts telling you
+    /// about changes once you have shown interest in the list.
+    pub async fn list_work(&self) -> Result<WorkListed> {
+        self.require_capability(capabilities::WORK_REGISTRY)?;
+        let envelope = self
+            .request_terminal(Command::WorkList, PendingKind::WorkList)
+            .await?;
+        match envelope.event {
+            Event::WorkListed(listed) => Ok(listed),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "work_list terminated with `{}` instead of `work_listed`",
+                    other.event_type()
+                ),
+            }),
+        }
+    }
+
+    /// Act on one registry row.
+    ///
+    /// A row that no longer exists fails with [`Error::Runtime`] carrying the
+    /// runtime's `work_not_found` code, rather than reporting success for work
+    /// that was never touched.
+    pub async fn act_on_work(
+        &self,
+        work_id: impl Into<String>,
+        action: WorkActionKind,
+    ) -> Result<String> {
+        self.require_capability(capabilities::WORK_ACTION)?;
+        let envelope = self
+            .request_terminal(
+                Command::WorkAction {
+                    work_id: work_id.into(),
+                    action,
+                },
+                PendingKind::WorkAction,
+            )
+            .await?;
+        match envelope.event {
+            Event::WorkActioned(actioned) => Ok(actioned.work_id),
+            other => Err(Error::ProtocolViolation {
+                reason: format!(
+                    "work_action terminated with `{}` instead of `work_actioned`",
+                    other.event_type()
+                ),
+            }),
+        }
+    }
+
+    /// Follow registry changes instead of polling.
+    ///
+    /// Each notice carries the registry's new revision; call
+    /// [`Client::list_work`] to see what moved. The runtime only sends these
+    /// to connections that have asked for the list, so this calls
+    /// `list_work` once to subscribe and returns that first snapshot alongside
+    /// the stream.
+    ///
+    /// A watcher that falls behind loses notices rather than stalling the
+    /// connection every session shares: the revision is a hint to re-list, not
+    /// a record the caller must not miss.
+    pub async fn watch_work(&self) -> Result<(WorkListed, WorkWatcher)> {
+        let (sender, receiver) = mpsc::channel(WORK_CHANGE_BUFFER);
+        self.inner.register_work_watcher(sender);
+        let listed = self.list_work().await?;
+        Ok((listed, WorkWatcher { changes: receiver }))
+    }
+
     /// Create a session, run one prompt to completion, then unload the session.
     pub async fn run(
         &self,
@@ -684,6 +763,22 @@ impl Session {
     }
 }
 
+/// Notices that the runtime's work registry moved.
+///
+/// Each carries the new revision; re-list to see what changed. Dropping it
+/// stops delivery -- the runtime keeps its own subscription, but this client
+/// stops holding the notices.
+pub struct WorkWatcher {
+    changes: mpsc::Receiver<WorkChanged>,
+}
+
+impl WorkWatcher {
+    /// Next registry change, or `None` once the connection is gone.
+    pub async fn next_change(&mut self) -> Option<WorkChanged> {
+        self.changes.recv().await
+    }
+}
+
 /// A hosted session this client is observing but does not own.
 ///
 /// Dropping it detaches. The runtime keeps fanning events at an attachment
@@ -895,6 +990,8 @@ enum PendingKind {
     SessionList,
     SessionAttach,
     SessionDetach,
+    WorkList,
+    WorkAction,
     Run,
     CommandAck,
     Shutdown,
@@ -912,6 +1009,8 @@ impl PendingKind {
                     | (Self::SessionList, Event::SessionListed(_))
                     | (Self::SessionAttach, Event::SessionAttached(_))
                     | (Self::SessionDetach, Event::SessionDetached(_))
+                    | (Self::WorkList, Event::WorkListed(_))
+                    | (Self::WorkAction, Event::WorkActioned(_))
                     | (Self::Run, Event::RunCompleted(_))
                     | (Self::CommandAck, Event::CommandAck(_))
                     | (Self::Shutdown, Event::CommandAck(_))
@@ -1009,6 +1108,10 @@ struct Inner {
     /// ours, so without this table the first fanned-out event would be an
     /// unknown-`request_id` protocol violation and would fail the connection.
     attachments: Mutex<HashMap<String, mpsc::Sender<EventEnvelope>>>,
+    /// Sink for `WorkChanged`, which belongs to no session and answers no
+    /// request: it reports that the runtime's registry moved, and reaches only
+    /// connections that asked for the work list.
+    work_watchers: Mutex<Vec<mpsc::Sender<WorkChanged>>>,
     next_request_id: AtomicU64,
     terminal_error: Mutex<Option<Error>>,
     runtime_info: Mutex<Option<RuntimeInfo>>,
@@ -1026,6 +1129,7 @@ impl Inner {
             transport,
             pending: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
+            work_watchers: Mutex::new(Vec::new()),
             next_request_id: AtomicU64::new(1),
             terminal_error: Mutex::new(None),
             runtime_info: Mutex::new(None),
@@ -1113,6 +1217,22 @@ impl Inner {
         true
     }
 
+    /// Fan a registry change out to everyone watching, dropping senders whose
+    /// receiver is gone. A watcher that fell behind loses the notice rather
+    /// than stalling the connection; the revision is a hint to re-list, not
+    /// state the caller must not miss.
+    fn route_to_work_watchers(&self, changed: &WorkChanged) {
+        let mut watchers = lock(&self.work_watchers);
+        watchers.retain(|sender| !sender.is_closed());
+        for sender in watchers.iter() {
+            let _ = sender.try_send(*changed);
+        }
+    }
+
+    fn register_work_watcher(&self, sender: mpsc::Sender<WorkChanged>) {
+        lock(&self.work_watchers).push(sender);
+    }
+
     fn register_attachment(&self, session_id: &str, sender: mpsc::Sender<EventEnvelope>) {
         lock(&self.attachments).insert(session_id.to_owned(), sender);
     }
@@ -1130,6 +1250,10 @@ impl Inner {
             // otherwise the runtime is talking about something we never asked
             // for, which stays a protocol violation.
             drop(pending);
+            if let Event::WorkChanged(changed) = &envelope.event {
+                self.route_to_work_watchers(changed);
+                return Ok(());
+            }
             if self.route_to_attachment(&envelope) {
                 return Ok(());
             }
@@ -1309,11 +1433,15 @@ fn validate_envelope(
         });
     }
     // An empty `request_id` is the runtime emitting on its own behalf rather
-    // than answering anyone -- approvals it raised, work it noticed. That is
-    // only meaningful for a session, and `route` decides whether we are
-    // attached to it. Unattached, it stays a violation: nothing else in the
-    // protocol may arrive unaddressed.
-    if envelope.request_id.is_empty() && envelope.session_id.is_none() {
+    // than answering anyone -- approvals it raised, work it noticed. Session
+    // events name their session and `route` decides whether we are attached;
+    // `WorkChanged` names nothing at all, because it is about the runtime's
+    // whole registry rather than one session, and only reaches connections
+    // that asked for the work list. Everything else unaddressed stays a
+    // violation.
+    let unaddressed_but_expected =
+        envelope.session_id.is_some() || matches!(envelope.event, Event::WorkChanged(_));
+    if envelope.request_id.is_empty() && !unaddressed_but_expected {
         return Err(Error::ProtocolViolation {
             reason: "event request_id is empty".into(),
         });

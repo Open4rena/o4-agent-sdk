@@ -10,14 +10,14 @@ mod transport;
 
 pub use client::{
     AttachedSession, Client, ClientOptions, ResumeOptions, RunHandle, RunOptions, RunResult,
-    RuntimeInfo, Session, SessionOptions,
+    RuntimeInfo, Session, SessionOptions, WorkWatcher,
 };
 pub use error::{Error, Result, RuntimeDiagnostics};
 pub use o4_agent_protocol as protocol;
 pub use o4_agent_protocol::{
     Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig, Reasoning, RunStatus,
-    SandboxMode, SessionSummary, Usage, PROTOCOL_VERSION, SDK_CAPABILITIES,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    SandboxMode, SessionSummary, Usage, WorkActionKind, WorkChanged, WorkCountsWire, WorkItemWire,
+    WorkListed, PROTOCOL_VERSION, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 

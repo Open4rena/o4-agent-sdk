@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use o4_agent_sdk::protocol::{
-    AgentStarted, Command, CommandAck, Context, Event, EventEnvelope, ExecutionPolicy,
+    AgentStarted, Command, CommandAck, Context, ErrorEvent, Event, EventEnvelope, ExecutionPolicy,
     McpServerConfig, MessageEvent, OwnerWire, RequestEnvelope, RunCompleted, RunStarted, RunStatus,
     RuntimeReady, SandboxMode, SessionEvent, SessionListed, SessionSummary, SteeringInjected,
-    Usage, WarningEvent,
+    Usage, WarningEvent, WorkActionKind, WorkActioned, WorkChanged, WorkListed,
 };
 use o4_agent_sdk::{
     Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions, RuntimeDiagnostics,
@@ -1063,6 +1063,8 @@ async fn handshake_with_daemon(peer: &mut RuntimePeer) {
                 "session.resume".into(),
                 "session_list".into(),
                 "session_attach".into(),
+                "work_registry".into(),
+                "work_action".into(),
             ],
             daemon: None,
         }),
@@ -1143,7 +1145,12 @@ async fn listing_reports_hosted_sessions_with_their_directories() {
     assert_eq!(sessions[0].cwd, "/work/api");
     assert_eq!(
         client.daemon_capabilities(),
-        vec!["session_list".to_owned(), "session_attach".to_owned()]
+        vec![
+            "session_list".to_owned(),
+            "session_attach".to_owned(),
+            "work_registry".to_owned(),
+            "work_action".to_owned(),
+        ]
     );
 }
 
@@ -1276,4 +1283,145 @@ async fn dropping_an_attachment_detaches_without_disturbing_the_session() {
         "dropping an attachment must tell the runtime: {:?}",
         commands[1]
     );
+}
+
+// --- Phase 3: the work registry ---------------------------------------------
+
+#[tokio::test]
+async fn work_registry_lists_and_acts_and_reports_a_missing_row() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+
+        let list = peer.request().await;
+        assert!(matches!(list.command, Command::WorkList));
+        peer.send(
+            &list.request_id,
+            None,
+            None,
+            Event::WorkListed(WorkListed {
+                revision: 7,
+                ..Default::default()
+            }),
+        );
+
+        let act = peer.request().await;
+        assert!(matches!(
+            act.command,
+            Command::WorkAction { ref work_id, action: WorkActionKind::Stop } if work_id == "w-1"
+        ));
+        peer.send(
+            &act.request_id,
+            None,
+            None,
+            Event::WorkActioned(WorkActioned {
+                work_id: "w-1".into(),
+            }),
+        );
+
+        let missing = peer.request().await;
+        assert!(matches!(missing.command, Command::WorkAction { .. }));
+        peer.send(
+            &missing.request_id,
+            None,
+            None,
+            Event::Error(ErrorEvent {
+                code: "work_not_found".into(),
+                message: "no work row 'gone'".into(),
+                retryable: false,
+                details: None,
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    assert_eq!(client.list_work().await.unwrap().revision, 7);
+    assert_eq!(
+        client
+            .act_on_work("w-1", WorkActionKind::Stop)
+            .await
+            .unwrap(),
+        "w-1"
+    );
+
+    // R4.4: acting on a row that is gone must fail, not quietly succeed.
+    let error = client
+        .act_on_work("gone", WorkActionKind::Clear)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Runtime { code, .. } if code == "work_not_found"),
+        "unexpected error: {error:?}"
+    );
+    runtime.await.unwrap();
+}
+
+/// `WorkChanged` is addressed to nobody: empty request id and no session,
+/// because it is about the whole registry rather than one session. The Phase 2
+/// relaxation only covered events naming a session, so without widening it
+/// this event would fail the connection.
+#[tokio::test]
+async fn work_change_notices_arrive_addressed_to_nothing_at_all() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        let list = peer.request().await;
+        peer.send(
+            &list.request_id,
+            None,
+            None,
+            Event::WorkListed(WorkListed {
+                revision: 1,
+                ..Default::default()
+            }),
+        );
+        peer.send(
+            "",
+            None,
+            None,
+            Event::WorkChanged(WorkChanged { revision: 2 }),
+        );
+        peer.send(
+            "",
+            None,
+            None,
+            Event::WorkChanged(WorkChanged { revision: 3 }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let (first, mut watcher) = client.watch_work().await.unwrap();
+    runtime.await.unwrap();
+
+    assert_eq!(first.revision, 1);
+    assert_eq!(watcher.next_change().await.unwrap().revision, 2);
+    assert_eq!(watcher.next_change().await.unwrap().revision, 3);
+}
+
+#[tokio::test]
+async fn work_calls_need_their_capabilities() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        peer
+    });
+    let client = Client::connect(transport).await.unwrap();
+    let mut peer = runtime.await.unwrap();
+
+    let error = client.list_work().await.unwrap_err();
+    assert!(
+        matches!(&error, Error::MissingCapability { capability } if capability == "work_registry"),
+        "unexpected error: {error:?}"
+    );
+    let error = client
+        .act_on_work("w-1", WorkActionKind::Foreground)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::MissingCapability { capability } if capability == "work_action"),
+        "unexpected error: {error:?}"
+    );
+    assert!(peer.requests.try_recv().is_err(), "no frame may be sent");
 }
