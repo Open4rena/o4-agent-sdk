@@ -5,15 +5,16 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use o4_agent_sdk::protocol::{
-    AgentStarted, Command, CommandAck, Context, ErrorEvent, Event, EventEnvelope, ExecutionPolicy,
-    McpServerConfig, MessageEvent, OwnerWire, RequestEnvelope, RunCompleted, RunStarted, RunStatus,
-    RuntimeReady, SandboxMode, SessionEvent, SessionListed, SessionSummary, SteeringInjected,
-    Usage, WarningEvent, WorkActionKind, WorkActioned, WorkChanged, WorkListed,
+    AgentStarted, ApprovalDecision, ApprovalRequested, Command, CommandAck, Context, ErrorEvent,
+    Event, EventEnvelope, ExecutionPolicy, McpServerConfig, MessageEvent, OwnerWire,
+    RequestEnvelope, RunCompleted, RunStarted, RunStatus, RuntimeReady, SandboxMode, SessionEvent,
+    SessionListed, SessionSummary, SteeringInjected, Usage, WarningEvent, WorkActionKind,
+    WorkActioned, WorkChanged, WorkListed,
 };
 use o4_agent_sdk::{
-    Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions, RuntimeDiagnostics,
-    SessionOptions, Transport, TransportError, DEFAULT_RUNTIME_VERSION_REQUIREMENT,
-    PROTOCOL_VERSION,
+    ApprovalOutcome, Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions,
+    RuntimeDiagnostics, SessionOptions, Transport, TransportError,
+    DEFAULT_RUNTIME_VERSION_REQUIREMENT, PROTOCOL_VERSION,
 };
 use semver::VersionReq;
 use serde_json::{json, Value};
@@ -1065,6 +1066,7 @@ async fn handshake_with_daemon(peer: &mut RuntimePeer) {
                 "session_attach".into(),
                 "work_registry".into(),
                 "work_action".into(),
+                "interactive_approvals".into(),
             ],
             daemon: None,
         }),
@@ -1150,6 +1152,7 @@ async fn listing_reports_hosted_sessions_with_their_directories() {
             "session_attach".to_owned(),
             "work_registry".to_owned(),
             "work_action".to_owned(),
+            "interactive_approvals".to_owned(),
         ]
     );
 }
@@ -1424,4 +1427,236 @@ async fn work_calls_need_their_capabilities() {
         "unexpected error: {error:?}"
     );
     assert!(peer.requests.try_recv().is_err(), "no frame may be sent");
+}
+
+// --- Phase 4: permission prompts --------------------------------------------
+
+fn approval(request_id: &str) -> ApprovalRequested {
+    ApprovalRequested {
+        request_id: request_id.into(),
+        work_id: Some("w-1".into()),
+        tool: "write".into(),
+        summary: "write /tmp/x".into(),
+        risk: None,
+        always_allow_available: true,
+    }
+}
+
+#[tokio::test]
+async fn an_approval_is_delivered_and_answering_lets_the_run_continue() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        // Raised by the runtime itself: empty request id, names its session.
+        peer.send(
+            "",
+            Some("s-1"),
+            None,
+            Event::ApprovalRequested(approval("ap-1")),
+        );
+        let answer = peer.request().await;
+        let Command::ApprovalRespond {
+            ref request_id,
+            decision,
+        } = answer.command
+        else {
+            panic!("expected approval_respond, got {:?}", answer.command);
+        };
+        assert_eq!(request_id, "ap-1");
+        assert_eq!(decision, ApprovalDecision::Approve);
+        peer.send(
+            &answer.request_id,
+            None,
+            None,
+            Event::CommandAck(CommandAck {
+                command: Some("approval_respond".into()),
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let mut approvals = client.approvals().await.unwrap();
+    let request = approvals.next_request().await.expect("an approval");
+
+    assert_eq!(request.id(), "ap-1");
+    assert_eq!(request.tool(), "write");
+    assert_eq!(request.work_id(), Some("w-1"));
+    assert!(request.always_allow_available());
+    // Answer before joining the fake: it is blocked waiting for exactly this.
+    assert_eq!(
+        request.respond(ApprovalDecision::Approve).await.unwrap(),
+        ApprovalOutcome::Recorded
+    );
+    runtime.await.unwrap();
+}
+
+/// Another client may answer first. That is the design (daemon-core R3.3), not
+/// a failure the application has to treat as one.
+#[tokio::test]
+async fn losing_the_race_to_answer_is_an_outcome_not_an_error() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        peer.send(
+            "",
+            Some("s-1"),
+            None,
+            Event::ApprovalRequested(approval("ap-2")),
+        );
+        let answer = peer.request().await;
+        peer.send(
+            &answer.request_id,
+            None,
+            None,
+            Event::Error(ErrorEvent {
+                code: "already_resolved".into(),
+                message: "that approval request was already answered".into(),
+                retryable: false,
+                details: None,
+            }),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let mut approvals = client.approvals().await.unwrap();
+    let request = approvals.next_request().await.expect("an approval");
+    assert_eq!(
+        request.respond(ApprovalDecision::Deny).await.unwrap(),
+        ApprovalOutcome::AlreadyResolved
+    );
+    runtime.await.unwrap();
+}
+
+/// The failure this phase exists to prevent: turning approvals on against a
+/// runtime that cannot answer them parks the run forever, with no error.
+#[tokio::test]
+async fn asking_for_prompts_a_runtime_cannot_give_fails_at_creation() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await; // no daemon capabilities
+        peer
+    });
+    let client = Client::connect(transport).await.unwrap();
+    let mut peer = runtime.await.unwrap();
+
+    let policy = ExecutionPolicy {
+        interactive_approvals: true,
+        ..Default::default()
+    };
+    let error = match client
+        .create_session(SessionOptions::new("m", cwd()).execution_policy(policy))
+        .await
+    {
+        Ok(_) => panic!("creating a prompting session must fail here"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(&error, Error::MissingCapability { capability }
+            if capability == "interactive_approvals"),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        peer.requests.try_recv().is_err(),
+        "the session must not be created at all"
+    );
+
+    // And the stream itself is gated the same way.
+    let error = match client.approvals().await {
+        Ok(_) => panic!("the approval stream must be gated too"),
+        Err(error) => error,
+    };
+    assert!(matches!(&error, Error::MissingCapability { .. }));
+}
+
+#[tokio::test]
+async fn approvals_stay_off_unless_asked_for() {
+    assert!(!ExecutionPolicy::default().interactive_approvals);
+
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        let request = peer.request().await;
+        let Command::SessionCreate {
+            ref execution_policy,
+            ..
+        } = request.command
+        else {
+            panic!("expected session_create");
+        };
+        // R5.5: an existing caller that never mentions approvals must not
+        // start prompting just because the SDK learned how.
+        assert!(execution_policy
+            .as_ref()
+            .is_none_or(|p| !p.interactive_approvals));
+        peer.send(
+            &request.request_id,
+            Some("s-1"),
+            None,
+            Event::SessionCreated(SessionEvent::default()),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    client
+        .create_session(SessionOptions::new("m", cwd()))
+        .await
+        .unwrap();
+    runtime.await.unwrap();
+}
+
+/// The runtime can raise a request the moment a session starts prompting,
+/// which may be before the application has asked for the stream. That approval
+/// has nowhere to go yet, and used to fall through to the unknown-request rule
+/// and kill the connection -- the exact silent hang this phase exists to stop.
+/// Requests are buffered from connect, so arriving early is ordinary.
+#[tokio::test]
+async fn an_approval_that_arrives_before_anyone_is_listening_is_kept() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        peer.send(
+            "",
+            Some("s-1"),
+            None,
+            Event::ApprovalRequested(approval("early")),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let _peer = runtime.await.unwrap();
+
+    // Ask only now, after it already arrived.
+    let mut approvals = client.approvals().await.unwrap();
+    let request = tokio::time::timeout(std::time::Duration::from_secs(5), approvals.next_request())
+        .await
+        .expect("an early approval must still be waiting")
+        .expect("a request");
+    assert_eq!(request.id(), "early");
+
+    // And the connection is still alive, which it was not before this fix.
+    assert!(client
+        .runtime_info()
+        .capabilities
+        .iter()
+        .any(|c| c == "session_list"));
+}
+
+#[tokio::test]
+async fn the_approval_stream_is_handed_out_once() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        peer
+    });
+    let client = Client::connect(transport).await.unwrap();
+    let _peer = runtime.await.unwrap();
+
+    let _first = client.approvals().await.unwrap();
+    // Splitting requests between two readers would mean some go unanswered,
+    // and an unanswered request parks its run.
+    assert!(client.approvals().await.is_err());
 }

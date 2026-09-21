@@ -9,9 +9,10 @@ use std::time::Duration;
 
 use futures_core::Stream;
 use o4_agent_protocol::{
-    capabilities, Command, Context, Event, EventEnvelope, ExecutionPolicy, McpServerConfig,
-    Reasoning, RequestEnvelope, RunCompleted, RunStatus, RuntimeReady, SessionSummary, Usage,
-    WorkActionKind, WorkChanged, WorkListed, SDK_CAPABILITIES, SUPPORTED_PROTOCOL_VERSIONS,
+    capabilities, ApprovalDecision, ApprovalRequested, Command, Context, Event, EventEnvelope,
+    ExecutionPolicy, McpServerConfig, Reasoning, RequestEnvelope, RunCompleted, RunStatus,
+    RuntimeReady, SessionSummary, Usage, WorkActionKind, WorkChanged, WorkListed, SDK_CAPABILITIES,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
 use semver::{Version, VersionReq};
 use serde_json::Value;
@@ -33,12 +34,17 @@ const ATTACHMENT_EVENT_BUFFER: usize = 256;
 /// Buffer for one work watcher. Notices are hints to re-list, so a slow
 /// watcher drops them rather than stalling the shared connection.
 const WORK_CHANGE_BUFFER: usize = 64;
+/// Buffer for pending approvals. Unlike work notices these must not be
+/// dropped: a request nobody answers parks its run forever, so the buffer is
+/// generous and overflow is surfaced rather than silently discarded.
+const APPROVAL_BUFFER: usize = 256;
 /// The capabilities this SDK knows how to use, for `daemon_capabilities`.
 const DAEMON_CAPABILITIES: &[&str] = &[
     capabilities::SESSION_LIST,
     capabilities::SESSION_ATTACH,
     capabilities::WORK_REGISTRY,
     capabilities::WORK_ACTION,
+    capabilities::INTERACTIVE_APPROVALS,
 ];
 
 /// Connection and compatibility policy.
@@ -494,6 +500,30 @@ impl Client {
         Ok((listed, WorkWatcher { changes: receiver }))
     }
 
+    /// Receive the permission requests the runtime raises.
+    ///
+    /// Call this *before* creating a session with `interactive_approvals`, and
+    /// keep draining it. A request nobody answers parks its run forever --
+    /// no error, no timeout -- so a session that prompts without a reader is
+    /// a session that quietly stops.
+    ///
+    /// There is one stream per connection: requests are buffered from connect,
+    /// so nothing is lost between connecting and asking. Taking it twice is an
+    /// error rather than silently splitting the requests between two readers.
+    pub async fn approvals(&self) -> Result<ApprovalStream> {
+        self.require_capability(capabilities::INTERACTIVE_APPROVALS)?;
+        let receiver = self
+            .inner
+            .approval_receiver
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| Error::ProtocolViolation {
+                reason: "the approval stream was already taken".into(),
+            })?;
+        Ok(ApprovalStream { requests: receiver })
+    }
+
     /// Create a session, run one prompt to completion, then unload the session.
     pub async fn run(
         &self,
@@ -514,6 +544,16 @@ impl Client {
     }
 
     pub async fn create_session(&self, options: SessionOptions) -> Result<Session> {
+        // R5.3: a session that prompts against a runtime that cannot prompt
+        // would park on its first request with nothing able to answer. Fail
+        // here, where the caller can still see why.
+        if options
+            .execution_policy
+            .as_ref()
+            .is_some_and(|policy| policy.interactive_approvals)
+        {
+            self.require_capability(capabilities::INTERACTIVE_APPROVALS)?;
+        }
         let cwd = validate_cwd(&options.cwd)?;
         let requested_id = options.session_id.clone();
         let command = Command::SessionCreate {
@@ -760,6 +800,102 @@ impl Session {
         };
         resolve_session_identity(Some(&self.id), envelope.session_id.as_deref(), payload_id)?;
         Ok(())
+    }
+}
+
+/// One permission request the runtime is parked on.
+///
+/// Answer it. A request nobody answers does not fail and does not time out --
+/// the run parks until some client responds (daemon-core R3.3), so dropping
+/// these without answering is how a session hangs silently.
+pub struct ApprovalRequest {
+    inner: Arc<Inner>,
+    requested: ApprovalRequested,
+}
+
+impl ApprovalRequest {
+    /// The runtime's id for this request, which the answer is keyed on.
+    pub fn id(&self) -> &str {
+        &self.requested.request_id
+    }
+
+    /// Tool the run wants to use.
+    pub fn tool(&self) -> &str {
+        &self.requested.tool
+    }
+
+    /// Human-readable description of what is being asked.
+    pub fn summary(&self) -> &str {
+        &self.requested.summary
+    }
+
+    /// Registry row parked on this request, when the runtime knows it.
+    pub fn work_id(&self) -> Option<&str> {
+        self.requested.work_id.as_deref()
+    }
+
+    /// Whether `AlwaysAllow` is meaningful here; it is not always offered.
+    pub fn always_allow_available(&self) -> bool {
+        self.requested.always_allow_available
+    }
+
+    /// The whole wire payload, for fields this handle does not name.
+    pub fn payload(&self) -> &ApprovalRequested {
+        &self.requested
+    }
+
+    /// Answer it.
+    ///
+    /// Another attached client may have answered first; that is not a failure
+    /// of yours, so it returns [`ApprovalOutcome::AlreadyResolved`] rather than
+    /// an error (daemon-core R3.3).
+    pub async fn respond(&self, decision: ApprovalDecision) -> Result<ApprovalOutcome> {
+        let client = Client {
+            inner: Arc::clone(&self.inner),
+        };
+        let result = client
+            .request_terminal(
+                Command::ApprovalRespond {
+                    request_id: self.requested.request_id.clone(),
+                    decision,
+                },
+                PendingKind::CommandAck,
+            )
+            .await;
+        match result {
+            Ok(_) => Ok(ApprovalOutcome::Recorded),
+            // The runtime says `already_resolved` when someone else got there
+            // first, or when the request never existed. Both mean the same
+            // thing to a caller: stop waiting on it.
+            Err(Error::Runtime { ref code, .. }) if code == "already_resolved" => {
+                Ok(ApprovalOutcome::AlreadyResolved)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// What became of an answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalOutcome {
+    /// The runtime took this answer and the run continues.
+    Recorded,
+    /// Another client answered first, or the request had already lapsed.
+    AlreadyResolved,
+}
+
+/// Permission requests the runtime raises, for the application to answer.
+///
+/// Draining this is not optional once a session enables approvals: an
+/// unanswered request parks its run indefinitely.
+pub struct ApprovalStream {
+    requests: mpsc::Receiver<ApprovalRequest>,
+}
+
+impl ApprovalStream {
+    /// Next request, or `None` once the connection is gone.
+    pub async fn next_request(&mut self) -> Option<ApprovalRequest> {
+        self.requests.recv().await
     }
 }
 
@@ -1112,6 +1248,19 @@ struct Inner {
     /// request: it reports that the runtime's registry moved, and reaches only
     /// connections that asked for the work list.
     work_watchers: Mutex<Vec<mpsc::Sender<WorkChanged>>>,
+    /// Sink for approval requests the runtime raised. Like session events they
+    /// name a session and answer no request of ours; unlike them they are not
+    /// optional to read, because a request nobody answers parks its run.
+    ///
+    /// It exists from connect rather than from the first `approvals()` call.
+    /// The runtime can raise a request the instant a session starts prompting,
+    /// which may be before the application has asked for the stream; an
+    /// approval with nowhere to go used to fall through to the unknown-request
+    /// rule and fail the whole connection. Buffering from the start means the
+    /// race cannot happen, and a caller that never reads simply leaves
+    /// requests queued -- visibly parked, rather than a dead connection.
+    approval_sender: mpsc::Sender<ApprovalRequest>,
+    approval_receiver: AsyncMutex<Option<mpsc::Receiver<ApprovalRequest>>>,
     next_request_id: AtomicU64,
     terminal_error: Mutex<Option<Error>>,
     runtime_info: Mutex<Option<RuntimeInfo>>,
@@ -1125,11 +1274,14 @@ struct Inner {
 
 impl Inner {
     fn new(transport: Arc<dyn Transport>) -> Self {
+        let (approval_sender, approval_receiver) = mpsc::channel(APPROVAL_BUFFER);
         Self {
             transport,
             pending: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
             work_watchers: Mutex::new(Vec::new()),
+            approval_sender,
+            approval_receiver: AsyncMutex::new(Some(approval_receiver)),
             next_request_id: AtomicU64::new(1),
             terminal_error: Mutex::new(None),
             runtime_info: Mutex::new(None),
@@ -1229,6 +1381,18 @@ impl Inner {
         }
     }
 
+    /// Hand an approval request to the application, if it is listening.
+    ///
+    /// Returns whether it was claimed. Unclaimed falls through to the ordinary
+    /// routing rules: an application that never called `approvals()` cannot
+    /// have created a session that prompts, so the request is not ours.
+    fn route_to_approvals(self: &Arc<Self>, requested: &ApprovalRequested) {
+        let _ = self.approval_sender.try_send(ApprovalRequest {
+            inner: Arc::clone(self),
+            requested: requested.clone(),
+        });
+    }
+
     fn register_work_watcher(&self, sender: mpsc::Sender<WorkChanged>) {
         lock(&self.work_watchers).push(sender);
     }
@@ -1241,7 +1405,7 @@ impl Inner {
         lock(&self.attachments).remove(session_id);
     }
 
-    fn route(&self, envelope: EventEnvelope) -> Result<()> {
+    fn route(self: &Arc<Self>, envelope: EventEnvelope) -> Result<()> {
         let request_id = envelope.request_id.clone();
         let mut pending = lock(&self.pending);
         let Some(request) = pending.get(&request_id) else {
@@ -1252,6 +1416,10 @@ impl Inner {
             drop(pending);
             if let Event::WorkChanged(changed) = &envelope.event {
                 self.route_to_work_watchers(changed);
+                return Ok(());
+            }
+            if let Event::ApprovalRequested(requested) = &envelope.event {
+                Inner::route_to_approvals(self, requested);
                 return Ok(());
             }
             if self.route_to_attachment(&envelope) {
