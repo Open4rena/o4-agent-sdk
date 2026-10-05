@@ -97,7 +97,8 @@ Run all three gates before committing code changes. Clippy runs with
   GitHub-linked noreply). This is set in repo-local config -- verify with
   `git config user.name` / `user.email` before the first commit on any fresh
   clone, and never let git fall back to a machine/hostname identity.
-- Keep the `Co-Authored-By: o4 <noreply@open4rena.com>` trailer on commits.
+- Never add a co-author line (or any other credit for o4 or an AI model) to
+  commit messages.
 - Do not commit or push unless the user explicitly asks. Never force-push
   without explicit approval.
 - Conventional-commit style subjects (e.g. `feat(sdk): ...`, `fix(sdk): ...`,
