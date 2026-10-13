@@ -343,9 +343,30 @@ async fn default_runtime_requirement_accepts_pinned_runtime() {
     runtime.await.unwrap();
 }
 
+/// o4's minor number moves when the patch number passes 99 (0.2.99 -> 0.3.0),
+/// not on a protocol change, so the default range must span every 0.x
+/// runtime. Protocol version and capabilities are the real compatibility
+/// checks; the semver floor only keeps out runtimes older than protocol v1.
+#[tokio::test]
+async fn default_runtime_requirement_accepts_every_zero_minor() {
+    for version in ["0.0.57", "0.2.99", "0.3.0", "0.3.18", "0.99.99"] {
+        let (transport, mut peer, _) = memory_pair("");
+        let runtime_version = version.to_owned();
+        let runtime =
+            tokio::spawn(async move { handshake_with_version(&mut peer, &runtime_version).await });
+
+        // The fake answers only the handshake, so the client is dropped
+        // rather than shut down.
+        let client = Client::connect(transport).await.unwrap();
+        assert_eq!(client.runtime_info().runtime_version.to_string(), version);
+        drop(client);
+        runtime.await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn default_runtime_requirement_rejects_older_and_next_major_runtimes() {
-    for version in ["0.0.56", "0.3.0"] {
+    for version in ["0.0.56", "1.0.0"] {
         let (transport, mut peer, _) = memory_pair("");
         let runtime_version = version.to_owned();
         let runtime =
@@ -359,7 +380,7 @@ async fn default_runtime_requirement_rejects_older_and_next_major_runtimes() {
                 requirement
             } if rejected == version
                 && requirement.contains(">=0.0.57")
-                && requirement.contains("<0.3.0")
+                && requirement.contains("<1.0.0")
         ));
         runtime.await.unwrap();
     }

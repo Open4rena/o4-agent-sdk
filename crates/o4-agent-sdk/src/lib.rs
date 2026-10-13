@@ -25,7 +25,11 @@ pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 
 /// Runtime versions compatible with this SDK release by default.
 ///
+/// Every 0.x runtime: o4's minor number moves when its patch number passes
+/// 99, not on a protocol change, so a per-minor ceiling only cuts users off
+/// at each rollover. Protocol version and capabilities are the real checks.
+///
 /// Keep this in step with `runtime_version_requirement` in
 /// `compatibility.toml`; `compatibility_pin_matches_compiled_default` fails if
 /// the two drift apart.
-pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <0.3.0";
+pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <1.0.0";

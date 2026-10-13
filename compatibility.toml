@@ -14,9 +14,10 @@ runtime_version = "0.2.25"
 protocol_version = 1
 
 # Semver constraint the SDK applies to the runtime at handshake in addition to
-# protocol and capability negotiation. The ceiling is the next runtime minor
-# after the verified one: 0.x releases move fast and stay protocol-v1 additive,
-# so the range spans the whole verified line rather than a single patch, and
-# stops before an unreviewed 0.3. Must equal
+# protocol and capability negotiation. It spans every 0.x runtime: o4's minor
+# number moves when its patch number passes 99 (0.2.99 -> 0.3.0), not on a
+# protocol change, so a per-minor ceiling only cut users off at each rollover.
+# Protocol version and capabilities are the real compatibility checks; the
+# floor keeps out runtimes older than protocol v1. Must equal
 # `DEFAULT_RUNTIME_VERSION_REQUIREMENT` in crates/o4-agent-sdk/src/lib.rs.
-runtime_version_requirement = ">=0.0.57, <0.3.0"
+runtime_version_requirement = ">=0.0.57, <1.0.0"
