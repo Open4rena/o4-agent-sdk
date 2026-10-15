@@ -19,14 +19,18 @@ The SDK versions independently of o4; see [VERSIONING.md](VERSIONING.md) for the
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/open4rena/o4-agent-sdk", rev = "0920250" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.4.1" }
 tokio = { version = "1", features = ["full"] }
 ```
 
 Prerequisites:
 
 - Rust 1.88+
-- A compatible `o4-agent-runtime` binary (see [Compatibility](#compatibility))
+- A compatible `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it as
+  `o4-agent-runtime-<platform>.tar.gz` (with a `.sha256`) on
+  [GitHub Releases](https://github.com/Open4rena/o4-releases), for `linux-x86_64`,
+  `linux-arm64` and `macos-arm64`. The archive holds only the binary; point
+  `LocalRuntime::new(...)` at it. See [Compatibility](#compatibility).
 
 ## Quick start
 

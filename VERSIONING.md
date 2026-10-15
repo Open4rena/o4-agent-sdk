@@ -3,7 +3,7 @@
 The o4 Agent SDK versions independently of the o4 CLI/runtime.
 
 The SDK and the runtime are separate artifacts with separate release cycles.
-The SDK's version (this workspace, currently `0.4.0`) tracks only the SDK's own
+The SDK's version (this workspace, currently `0.4.1`) tracks only the SDK's own
 public API and the wire protocol. It is **not** tied to o4's version number,
 which moves on a much faster, patch-per-fix cadence.
 
@@ -14,7 +14,7 @@ with in [`compatibility.toml`](compatibility.toml):
 
 ```toml
 runtime_commit = "<o4 repo commit providing o4-agent-runtime>"
-runtime_version = "0.2.25"
+runtime_version = "0.3.21"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
