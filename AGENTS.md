@@ -8,8 +8,8 @@ protocol. It is a **control plane**: it does not implement an agent loop, call
 model providers, or bundle the runtime. Applications link the SDK; the SDK
 spawns and drives the runtime binary.
 
-This repository is **private**. Keep it private until an explicit decision is
-made to publish it (see "Going public" below).
+This repository is **public**. Commit messages, code comments and docs are
+read by outside users; see "Public repository" below.
 
 ## Architecture
 
@@ -115,16 +115,18 @@ Run all three gates before committing code changes. Clippy runs with
 - The runtime is spawned directly (no shell, no PTY) with piped stdio; stderr
   is drained into a bounded (64 KiB default) tail buffer.
 
-## Going public
+## Public repository
 
-This repo is currently private. If it is ever prepared for public release:
+This repo is public; the o4 repository that builds `o4-agent-runtime` is not.
 
-- The versioning **policy** and `runtime_version_requirement` are safe to keep
-  public -- users need them.
-- Reconsider `runtime_commit` in `compatibility.toml`: it pins a commit of the
-  private o4 repository. Decide whether o4 becomes public too, or the runtime
-  ships as a standalone artifact/crate, before exposing that pin.
-- Confirm the runtime distribution story first -- a public SDK that cannot
-  obtain a compatible `o4-agent-runtime` is unusable.
+- Users obtain the runtime from the o4 release downloads
+  (`o4-agent-runtime-<platform>.tar.gz` on `Open4rena/o4-releases`), never
+  from the o4 source. Keep `runtime_version` in `compatibility.toml` pointing
+  at a version that has those downloads; `runtime_commit` records the o4
+  commit behind that release for maintainers with access.
+- Do not link to files inside the private o4 repository; copy what users
+  need into `docs/` here instead.
+- Never add a co-author line or any other credit for o4 or an AI model to a
+  commit message (see "Commit conventions").
 
 Do not change repository visibility yourself; that is a user decision.

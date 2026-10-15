@@ -134,7 +134,7 @@ let session = client
 
 ## Documentation
 
-- [Full SDK documentation](https://github.com/Open4rena/o4/blob/main/docs/agent-sdk.md) -- core concepts, execution policy, MCP, the wire protocol, and error handling.
+- [Full SDK documentation](docs/agent-sdk.md) -- core concepts, execution policy, MCP, the wire protocol, and error handling.
 - [VERSIONING.md](VERSIONING.md) -- compatibility policy and version guarantees.
 - [AGENTS.md](AGENTS.md) -- contribution and design conventions for this repository.
 
