@@ -132,6 +132,50 @@ let session = client
 # }
 ```
 
+## Coding-agent skill
+
+This repository includes one [o4 Agent SDK skill](skills/o4-agent-sdk/SKILL.md) with four bundled guides. It helps a coding agent build applications using the SDK's full current public API: runtime/provider setup, one-shot and durable sessions, structured results and limits, streaming/steering/cancellation, permissions, all three MCP transports, delegated agents, hosted-session observation, work dashboards, human approvals, custom transports, testing, and troubleshooting. Runtime-dependent features and wire-only operations are clearly distinguished.
+
+The skill is guidance for the coding agent working on **your application**. It does not register a new tool inside an SDK session, install the runtime, or grant permissions.
+
+### Install in o4
+
+With an o4 release supporting Agent Plugins v1 manifests:
+
+```sh
+mkdir -p "$HOME/.o4/plugins"
+o4 plugin install Open4rena/o4-agent-sdk
+o4 plugin list
+```
+
+This installs the bundle globally. Add `--project` to the install command for a project-local installation; review and trust that workspace first. Restart an existing o4 session, then open `/skills` or invoke it directly:
+
+```text
+/o4-agent-sdk Build a resumable Rust assistant with live progress and cancellation
+/o4-agent-sdk Add bounded JSON reports to my CI worker
+/o4-agent-sdk Connect my MCP server and ask before side-effecting tools run
+```
+
+The skill package is distributed from this repository's default branch. The Rust library dependency remains pinned to `v0.4.1`; that earlier tag does not contain the skill package. No provider keys or model calls are needed just to install or discover the skill. Installation does not automatically upgrade the SDK dependency in your application.
+
+### Install the standalone skill
+
+Alternatively, copy the **entire** `skills/o4-agent-sdk/` directory, including `references/`, into either:
+
+- `<your-project>/.o4/skills/o4-agent-sdk/` for a trusted project, or
+- `~/.o4/skills/o4-agent-sdk/` for your user account.
+
+Keep one installed copy to avoid duplicate names; do not overwrite a customized skill without reviewing it. This path does not need a plugin manifest. For another coding agent that supports `SKILL.md`, use that agent's documented skill location and copy the same directory; portable files do not imply automatic discovery by every host. Bundled reference paths resolve from the installed skill directory, not the application's working directory.
+
+### Guides and coverage
+
+- [Sessions and runs](skills/o4-agent-sdk/references/sessions-and-runs.md) -- one-shot, multi-turn, cold resume, context, JSON schemas, limits, usage, streaming, steering, and cancellation.
+- [Permissions, MCP, and sub-agents](skills/o4-agent-sdk/references/policy-mcp-and-subagents.md) -- policy semantics, stdio/SSE/Streamable HTTP configuration, credential handling, and runtime-mediated delegation.
+- [Runtime, deployment, and transports](skills/o4-agent-sdk/references/transports-and-deployment.md) -- installation, compatibility, providers, CI/containers, custom connections, lifecycle, errors, and verification.
+- [Hosted sessions, work, and approvals](skills/o4-agent-sdk/references/hosted-sessions-work-and-approvals.md) -- capability-gated observation, work snapshots/actions/watchers, and responding to human approval requests.
+
+The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.4.1; verify the connected runtime's advertised capabilities before depending on optional features.
+
 ## Documentation
 
 - [Full SDK documentation](docs/agent-sdk.md) -- core concepts, execution policy, MCP, the wire protocol, and error handling.

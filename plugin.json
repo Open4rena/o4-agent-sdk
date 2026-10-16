@@ -1,0 +1,5 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "o4-agent-sdk",
+  "description": "Build Rust applications with the o4 Agent SDK using a complete, task-oriented skill"
+}
