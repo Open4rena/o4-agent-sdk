@@ -111,7 +111,7 @@ CI; also replace `.github/runtime-checksums.txt` with the new release's
 checksums, or CI refuses the download. Keep the workflow's actions pinned to
 full commit SHAs.
 
-Runtimes 0.3.21 to 0.3.34 sometimes send an approval event out of order, so
+Runtimes 0.3.21 to 0.3.35 sometimes send an approval event out of order, so
 an approval run fails with "event sequence N is not greater than previous
 sequence M". That is a runtime bug, not an SDK one. CI and
 `scripts/run-examples.sh` retry such a run once, only when that is the sole

@@ -881,6 +881,146 @@ async fn process_eof_fails_pending_run_with_bounded_diagnostics() {
     runtime.await.unwrap();
 }
 
+fn assert_runtime_exited(error: Error, what: &str) {
+    assert!(
+        matches!(error, Error::RuntimeExited { .. }),
+        "{what} reported {error:?} instead of the lost connection"
+    );
+}
+
+/// `cancel()` and `steer()` on a run whose connection failed report that
+/// failure. They used to report `RunFinished`, as if the run had ended
+/// normally, which hid why it stopped.
+#[tokio::test]
+async fn control_after_a_lost_connection_reports_the_connection_error() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        let create = peer.request().await;
+        peer.send(
+            &create.request_id,
+            Some("session-lost"),
+            None,
+            Event::SessionCreated(SessionEvent::default()),
+        );
+        let run = peer.request().await;
+        peer.send(
+            &run.request_id,
+            Some("session-lost"),
+            Some("run-lost"),
+            Event::RunStarted(RunStarted::default()),
+        );
+        // Returning closes the connection mid-run.
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let session = client
+        .create_session(SessionOptions::new("o4-test", cwd()))
+        .await
+        .unwrap();
+    let mut run = session.run("test").await.unwrap();
+    assert!(run.next_event().await.unwrap().is_some());
+    assert_runtime_exited(run.next_event().await.unwrap_err(), "the event stream");
+
+    assert_runtime_exited(run.cancel().await.unwrap_err(), "cancel()");
+    assert_runtime_exited(run.steer("more").await.unwrap_err(), "steer()");
+    runtime.await.unwrap();
+}
+
+/// The same while `cancel()` is still waiting for the run to start.
+#[tokio::test]
+async fn control_waiting_for_a_run_to_start_reports_a_lost_connection() {
+    let (transport, mut peer, _) = memory_pair("");
+    let (run_sent, run_seen) = tokio::sync::oneshot::channel();
+    let (hang_up, hung_up) = tokio::sync::oneshot::channel::<()>();
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        let create = peer.request().await;
+        peer.send(
+            &create.request_id,
+            Some("session-early"),
+            None,
+            Event::SessionCreated(SessionEvent::default()),
+        );
+        let _run = peer.request().await;
+        run_sent.send(()).unwrap();
+        // Close only once `cancel()` is waiting for the run to start.
+        let _ = hung_up.await;
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let session = client
+        .create_session(SessionOptions::new("o4-test", cwd()))
+        .await
+        .unwrap();
+    let run = session.run("test").await.unwrap();
+    run_seen.await.unwrap();
+    let cancel = run.cancel();
+    tokio::pin!(cancel);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut cancel)
+            .await
+            .is_err(),
+        "cancel() returned before the run started"
+    );
+    hang_up.send(()).unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), cancel)
+        .await
+        .expect("cancel() kept waiting after the connection closed")
+        .unwrap_err();
+    assert_runtime_exited(error, "cancel()");
+    runtime.await.unwrap();
+}
+
+/// A run that ended normally still reports `RunFinished`, even if the
+/// connection fails later.
+#[tokio::test]
+async fn control_after_a_completed_run_reports_run_finished() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake(&mut peer).await;
+        let create = peer.request().await;
+        peer.send(
+            &create.request_id,
+            Some("session-done"),
+            None,
+            Event::SessionCreated(SessionEvent::default()),
+        );
+        let run = peer.request().await;
+        peer.send(
+            &run.request_id,
+            Some("session-done"),
+            Some("run-done"),
+            Event::RunStarted(RunStarted::default()),
+        );
+        peer.send(
+            &run.request_id,
+            Some("session-done"),
+            Some("run-done"),
+            Event::RunCompleted(completed("done".into())),
+        );
+        // Returning then closes the connection.
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let session = client
+        .create_session(SessionOptions::new("o4-test", cwd()))
+        .await
+        .unwrap();
+    let mut run = session.run("test").await.unwrap();
+    while let Some(envelope) = run.next_event().await.unwrap() {
+        if matches!(envelope.event, Event::RunCompleted(_)) {
+            break;
+        }
+    }
+    runtime.await.unwrap();
+    let error = run.cancel().await.unwrap_err();
+    assert!(
+        matches!(&error, Error::RunFinished { run_id } if run_id == "run-done"),
+        "{error:?}"
+    );
+}
+
 #[tokio::test]
 async fn validates_runtime_path_and_session_cwd() {
     let missing = cwd().join("definitely-not-an-o4-runtime");

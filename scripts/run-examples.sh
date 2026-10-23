@@ -210,7 +210,7 @@ fi
 # O4_EVAL_HARNESS_WRITE_SMOKE makes the test model write
 # eval-harness-smoke.txt in the workspace.
 #
-# Known runtime bug (0.3.21 to 0.3.34): approval runs sometimes fail with
+# Known runtime bug (0.3.21 to 0.3.35): approval runs sometimes fail with
 # "event sequence N is not greater than previous sequence M", because the
 # runtime sends two events out of order (1 in 50 to 1 in 90 runs on the pinned
 # 0.3.21, and 1 in 40 to 1 in 4 on 0.3.34). The SDK is right to stop. A run
