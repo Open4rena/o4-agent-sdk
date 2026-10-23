@@ -1164,6 +1164,9 @@ struct PendingRequest {
 struct RunControlState {
     run_id: Option<String>,
     terminal: bool,
+    /// Why the run ended, when it ended because the connection failed
+    /// rather than with its own terminal event.
+    failure: Option<Error>,
 }
 
 struct RunControl {
@@ -1204,6 +1207,14 @@ impl RunControl {
         self.state.send_modify(|state| state.terminal = true);
     }
 
+    /// End the run because the connection failed with `error`.
+    fn fail(&self, error: Error) {
+        self.state.send_modify(|state| {
+            state.terminal = true;
+            state.failure = Some(error);
+        });
+    }
+
     fn is_terminal(&self) -> bool {
         self.state.borrow().terminal
     }
@@ -1212,6 +1223,9 @@ impl RunControl {
         let mut state = self.state.subscribe();
         loop {
             let snapshot = state.borrow().clone();
+            if let Some(error) = snapshot.failure {
+                return Err(error);
+            }
             if snapshot.terminal {
                 return Err(Error::RunFinished {
                     run_id: snapshot.run_id.unwrap_or_else(|| "<not assigned>".into()),
@@ -1316,9 +1330,6 @@ impl Inner {
         run_control: Option<Arc<RunControl>>,
     ) -> Result<mpsc::Receiver<Result<EventEnvelope>>> {
         let _send_guard = self.send_lock.lock().await;
-        if let Some(error) = lock(&self.terminal_error).clone() {
-            return Err(error);
-        }
         if self.shutdown_acknowledged.load(Ordering::Acquire) {
             return Err(Error::ClientShutdown);
         }
@@ -1339,6 +1350,15 @@ impl Inner {
                 run_control,
             },
         );
+        // Checked after registering, not before: `fail_all` records the error
+        // before ending every registered request, so a connection failure
+        // either ends this request or is visible here. Checking first left a
+        // gap in which a request could miss both and wait forever for events
+        // that can never come.
+        if let Some(error) = lock(&self.terminal_error).clone() {
+            lock(&self.pending).remove(&request_id);
+            return Err(error);
+        }
 
         if let Err(error) = self.transport.send_line(line).await {
             lock(&self.pending).remove(&request_id);
@@ -1504,7 +1524,7 @@ impl Inner {
         let pending = std::mem::take(&mut *lock(&self.pending));
         for (_, request) in pending {
             if let Some(control) = request.run_control {
-                control.finish();
+                control.fail(error.clone());
             }
             let _ = request.sender.try_send(Err(error.clone()));
         }
