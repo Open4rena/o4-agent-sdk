@@ -18,6 +18,10 @@ Get the standalone runtime from [public o4 releases](https://github.com/Open4ren
 
 `LocalRuntime::new(path)` requires an existing executable file path. It canonicalizes the path and does **not** search `PATH`; prefer an absolute path or an explicit relative path such as `./o4-agent-runtime`. `O4_AGENT_RUNTIME_BIN` is a test/application convention: the SDK does not automatically read it for you.
 
+`SessionOptions::new(model, cwd)` needs a model the runtime has registered, such as `claude-sonnet-4-6`; there is no default model, and an unregistered name such as `o4` fails session creation with `Error::Runtime` (`model '<name>' is not registered`). A `provider:model` form such as `anthropic:claude-sonnet-4-6` selects the provider explicitly.
+
+Runtimes 0.3.21 to 0.3.34 include an offline test model, `open4rena-smoke:open4rena-usage-smoke`. It needs no account, makes no network request and costs nothing. It returns fixed replies, never real answers: `O4_PROVIDER_KEY_SMOKE_OK` to an ordinary prompt; for the prompt `O4_EVAL_HARNESS_WRITE_SMOKE`, a call to the `write` tool for `eval-harness-smoke.txt` in the workspace, then `O4_EVAL_HARNESS_WRITE_SMOKE_OK` or `..._FAILED`. It cannot produce structured output. Use it to test wiring, permissions and approvals without a provider; [`scripts/run-examples.sh`](https://github.com/Open4rena/o4-agent-sdk/blob/main/scripts/run-examples.sh) runs every SDK example with it. It is not a supported product model and may change between runtime releases.
+
 ## Connect, inspect support, and clean up
 
 This helper requires the caller to provide the verified runtime path, configured model, and existing workspace. It attempts graceful shutdown even when the task fails. The caller then checks the returned `RunStatus`, not just `Ok`.
@@ -133,7 +137,7 @@ All fallible SDK calls use `o4_agent_sdk::Result<T>`; `Error` is non-exhaustive,
 | `MissingCapabilities`, `MissingCapability` | Advertised features required at connect or by a gated method |
 | `HandshakeTimeout` | Child startup and valid runtime-ready response; no browser/TTY prompt on this connection |
 | `Runtime { code, message, retryable }` | Runtime rejection and its sanitized code; `retryable` is not permission to rerun side effects automatically |
-| `ClientShutdown`, `SessionClosed`, `RunFinished` | Handle lifetimes or completion/control races |
+| `ClientShutdown`, `SessionClosed`, `RunFinished` | Handle lifetimes or completion/control races. In SDK v0.4.1, `cancel()` and `steer()` also return `RunFinished` when the connection has failed; call `next_event()` or `final_result()` to get the real error |
 | `EventBufferOverflow` | Active-run consumer is too slow; drain it promptly and handle the failed shared connection |
 
 For an apparent hang, first check whether the app is draining events/approvals, waiting on a selected but idle observer, or holding handles alive. Do not retry indefinitely, kill unrelated processes, or disable enforcement to make progress. On ambiguous connection failure a command may have run already; decide whether retry/resume is safe before submitting it again.
@@ -142,6 +146,7 @@ For an apparent hang, first check whether the app is draining events/approvals, 
 
 - Unit/integration tests can implement an in-memory `Transport`; no runtime or provider key is needed. Verify emitted requests and route correct event envelopes, IDs, monotonic sequences, and timestamps rather than returning arbitrary JSON.
 - Test expected success **and** denial/failure: final non-completed status, missing capabilities, cancellation races, malformed output, cleanup, slow consumers, and approval handling as relevant.
-- Compile SDK examples and the application's chosen integration with its pinned dependencies. `cargo fmt --all -- --check`, `cargo test --workspace --all-targets`, and `cargo clippy --workspace --all-targets -- -D warnings` are the SDK repository gates.
+- Compile SDK examples and the application's chosen integration with its pinned dependencies. `cargo fmt --all -- --check`, `cargo test --workspace --all-targets`, `cargo test --workspace --doc` (which compiles this skill's Rust code), and `cargo clippy --workspace --all-targets -- -D warnings` are the SDK repository gates.
 - A real-runtime check uses an explicit executable, isolated workspace/state, successful handshake, and clean shutdown. Set `O4_AGENT_RUNTIME_BIN` when running the SDK's real-runtime tests and inspect output for skips; some helpers can skip on connection failure too.
-- The existing real-runtime suite covers negotiation, session create/close, cold resume, and invalid working directories. It does not by itself prove every MCP transport, approval UI, actual provider request, or policy restriction. Test those separately in the intended environment, with authorization for external connections and provider spending.
+- The offline test model checks real sessions, tools, permissions and approvals end to end without a provider; the SDK's own examples run that way in its CI. It never checks answer quality, structured output, or a real provider request.
+- The existing real-runtime suite covers negotiation, session create/close, cold resume, invalid working directories, and cancelling a run that waits for approval. It does not by itself prove every MCP transport, approval UI, actual provider request, or policy restriction. Test those separately in the intended environment, with authorization for external connections and provider spending.

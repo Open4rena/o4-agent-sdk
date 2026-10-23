@@ -62,7 +62,7 @@ sha256sum -c "o4-agent-runtime-${PLATFORM}.tar.gz.sha256"   # shasum -a 256 -c o
 tar -xzf "o4-agent-runtime-${PLATFORM}.tar.gz"               # extracts ./o4-agent-runtime
 ```
 
-The archive contains only the `o4-agent-runtime` binary. It takes no arguments and needs no `o4` CLI on the machine. If you build o4 from source instead, `cargo build --bin o4-agent-runtime` produces the same program.
+The archive contains only the `o4-agent-runtime` binary. It takes no arguments and needs no `o4` CLI on the machine.
 
 Point the SDK at the binary by passing its path to `LocalRuntime::new(...)`. The SDK's own end-to-end tests resolve it from the `O4_AGENT_RUNTIME_BIN` environment variable, which is a convenient convention to adopt in your code.
 
@@ -90,7 +90,7 @@ Two things to know for containers:
 
 The simplest path: connect, run a prompt to completion in a temporary session, get a final result. The SDK creates and closes the session for you.
 
-```rust
+```rust,no_run
 use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 #[tokio::main]
@@ -117,7 +117,7 @@ async fn main() -> o4_agent_sdk::Result<()> {
 
 Create a durable session, run multiple prompts against it, and keep it across runs.
 
-```rust
+```rust,no_run
 use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 #[tokio::main]
@@ -193,23 +193,25 @@ Events arrive as typed `Event` variants inside an `EventEnvelope` (which also ca
 Every session can carry an `ExecutionPolicy` that the runtime enforces **fail-closed**:
 
 ```rust
-use o4_agent_protocol::{ExecutionPolicy, SandboxMode};
+use o4_agent_sdk::{ExecutionPolicy, SandboxMode};
 
 let policy = ExecutionPolicy {
-    allowed_tools: vec!["read".into(), "glob".into(), "grep".into()],
-    denied_tools: vec!["bash".into()],
+    // A non-empty list is the session's whole toolset: only these tools.
+    allowed_tools: vec!["read".into(), "glob".into(), "grep".into(), "ls".into()],
     sandbox_mode: SandboxMode::WorkspaceWrite,
-    sandbox_config: None,
     allowed_domains: vec!["api.github.com".into()],
+    ..ExecutionPolicy::default()
 };
 ```
 
-- `allowed_tools` / `denied_tools` -- tool name grants and denials. Deny wins.
+- `allowed_tools` -- empty: the sandbox mode's baseline tools. Non-empty: **only** the listed tools, replacing the baseline. Verified on runtime 0.3.21: a `WorkspaceWrite` session allowing only `read` cannot write files.
+- `denied_tools` -- tools to remove. Naming a tool in both lists is an error.
 - `sandbox_mode` -- `Disabled`, `ReadOnly` (default), or `WorkspaceWrite`.
 - `sandbox_config` -- optional sandbox-specific configuration.
-- `allowed_domains` -- network egress allowlist for fetch/search tools.
+- `allowed_domains` -- network egress allowlist for fetch/search tools. Empty grants no network access.
+- `interactive_approvals` -- make side-effecting tool calls wait for an answer from the application (see `Client::approvals`). Off by default.
 
-Empty `allowed_tools` and `allowed_domains` are **not** grants -- the runtime applies its own secure baseline. Unknown or ambiguous tool names are rejected at session creation rather than silently weakening policy.
+The baseline under `ReadOnly` is the read-only file tools, internal helpers and the `agent` tool; `WorkspaceWrite` adds the file-writing tools; network tools join only when `allowed_domains` is set. Unknown or ambiguous tool names are rejected at session creation rather than silently weakening policy.
 
 Every capability a session assembles must have an enforceable policy class. In a restricted profile the runtime refuses to create the session rather than exposing something it cannot enforce, and tool provenance is host-owned -- a plugin or MCP tool cannot acquire a built-in's privileges by reusing its name.
 
@@ -218,34 +220,44 @@ Every capability a session assembles must have an enforceable policy class. In a
 Hosted sessions get the `agent` tool from the same shared builder as the interactive TUI and `--print`, so an SDK session can delegate:
 
 - **Depth** is capped at 3. The root session is depth 0, children exist at depths 1-3, and a depth-3 agent cannot spawn further. The cap is a fixed constant.
-- **Inheritance:** a child runs under the parent's effective envelope -- model and reasoning effort, API-key resolution, the filesystem policy derived from `sandbox_mode`/`sandbox_config`, hooks, and MCP configuration. A child is never granted more than its parent had.
-- **Delegation under policy:** `agent` is allowed at the secure baseline, so no explicit grant is needed. `denied_tools` still removes it.
-- **Approvals:** with `interactive_approvals`, a child's request is published as `ApprovalRequested` and parked until any attached client answers with `ApprovalRespond`, exactly like a root tool call. Closing the session releases parked requests as denials. Without `interactive_approvals`, a child that needs an approval fails closed instead of waiting.
+- **Inheritance:** a child runs under the parent's model and reasoning effort, API-key resolution, the filesystem policy derived from `sandbox_mode`/`sandbox_config`, hooks, and MCP configuration.
+- **Tool lists do not reach children (runtimes 0.3.21 to 0.3.34; read from the runtime source, not tested).** A child whose agent definition sets no permission mode, including the built-in `General` agent, gets a fixed toolset (`read`, `glob`, `ls`, `grep`, `write`, `edit`, `bash`, `fetch`, `web_search`, `git_info`) whatever the session's `allowed_tools` and `denied_tools` say. Its tool calls raise no approval requests, even with `interactive_approvals` on. The filesystem policy and command sandbox still apply.
+- **Delegation under policy:** `agent` is allowed at the secure baseline, so no explicit grant is needed. `denied_tools`, or an `allowed_tools` list that leaves it out, removes it. When tool restrictions or approvals matter, remove it.
+- **Approvals:** with `interactive_approvals`, the `agent` call itself waits for an answer. Closing the session releases parked requests as denials.
 
 ### MCP servers
 
 Sessions can start Model Context Protocol servers, with transactional startup (all-or-nothing) and teardown owned by the session:
 
 ```rust
-use o4_agent_protocol::McpServerConfig;
+use o4_agent_sdk::{ExecutionPolicy, McpServerConfig, SessionOptions};
 
 let server = McpServerConfig::Stdio {
     name: "docs".into(),
-    command: "npx".into(),
-    args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+    // An installed, trusted server; prefer an absolute path.
+    command: "/usr/local/bin/docs-mcp-server".into(),
+    args: vec![],
     env: Default::default(),
     cwd: None,
 };
-// SessionOptions::new(...).mcp_server(server)
+let options = SessionOptions::new("claude-sonnet-4-6", "/path/to/project")
+    .execution_policy(ExecutionPolicy {
+        // MCP tools are named `<server>__<tool>` and must be listed.
+        allowed_tools: vec!["docs__search".into(), "read".into()],
+        ..ExecutionPolicy::default()
+    })
+    .mcp_server(server);
 ```
 
-An `McpServerConfig::Sse { name, url, headers }` variant connects to remote SSE servers. If any configured server fails to start, session creation fails and every successfully started server is shut down.
+The runtime names each MCP tool `<server name>__<tool name>`. Unless `sandbox_mode` is `Disabled`, the session keeps an MCP tool only when `allowed_tools` names it, and session creation fails when no MCP tool from any configured server is named. With several servers, one whose tools are all unnamed still starts, and its tools are dropped. A stdio server is started as an ordinary process outside the session's sandbox, before any model turn, so only configure servers you trust.
+
+`McpServerConfig::Sse { name, url, headers }` connects to remote SSE servers, and `McpServerConfig::StreamableHttp` to Streamable HTTP servers. If any configured server fails to start, session creation fails and every successfully started server is shut down.
 
 ### Transport abstraction
 
-The SDK talks to the runtime through a small async trait:
+The SDK talks to the runtime through a small async trait (shown in part; see the transports guide in the skill for all of it):
 
-```rust
+```text
 #[async_trait]
 pub trait Transport: Send + Sync + 'static {
     async fn send_line(&self, line: String) -> Result<(), TransportError>;
@@ -262,9 +274,16 @@ pub trait Transport: Send + Sync + 'static {
 
 Commands and events are framed as one JSON object per line, versioned as protocol v1.
 
-**Commands** (`Command`, tagged by `type`): `initialize`, `session_create`, `session_resume`, `run_start`, `run_cancel`, `run_steer`, `session_close`, `shutdown`.
+**Commands** (`Command`, tagged by `type`): `initialize`, `session_create`, `session_resume`, `run_start`, `run_cancel`, `run_steer`, `session_close`, `shutdown`; for hosted sessions and work, `session_list`, `session_attach`, `session_detach`, `work_list`, `work_action`, `approval_respond`; and the wire-only `question_answer`, `run_drain`, `session_ownership`, which have no `Client` method.
 
-**Events** (`Event`, tagged by `type`): lifecycle (`runtime_ready`, `session_event`, `run_started`, `run_completed`), streaming (`text_delta`, `reasoning_delta`, `tool_call`, `tool_result`, `permission_request`), control (`command_ack`, `error`), and forward-compatible `unknown`.
+**Events** (`Event`, tagged by `type`):
+
+- Sessions: `runtime_ready`, `session_created`, `session_resumed`, `session_closed`.
+- Run progress: `run_started`, `agent_started`, `turn_started`, `message_started`, `message_updated`, `message_completed`, `tool_started`, `tool_updated`, `tool_completed`, `run_completed`. Message and tool events carry whole snapshots, not text deltas.
+- Diagnostics: `warning`, `router_diagnostic`, `retry`, `context_compacted`, `resource_limit`, `steering_injected`.
+- Replies: `command_ack`, `error`.
+- Hosted sessions, work and approvals: `session_listed`, `session_attached`, `session_detached`, `work_listed`, `work_actioned`, `work_changed`, `approval_requested`; wire-only `question_asked`, `run_drained`, `session_ownership_reported`.
+- Any other tag is kept as `Event::Unknown`, so a newer runtime does not break an older SDK.
 
 Compatibility is enforced at connect time on three axes:
 
@@ -297,7 +316,7 @@ Highlights:
 - Fail-closed execution-policy enforcement for filesystem, process, and network access.
 - Bounded frame and response sizes; redacted diagnostics.
 
-Download it from the o4 release that matches your pin, or build it from the o4 source with `cargo build --bin o4-agent-runtime`.
+Download it from the o4 release that matches your pin.
 
 ## Error handling
 
@@ -332,14 +351,18 @@ The SDK's integration suite runs against an in-memory fake JSONL runtime, so it 
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
+cargo test --workspace --doc      # compiles the Rust code in these docs
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The end-to-end tests exercise the real runtime binary (set `O4_AGENT_RUNTIME_BIN`) and cover session durability across two distinct runtime processes, MCP lifecycle, policy enforcement, protocol/capability/version negotiation, and malformed-output handling.
+The end-to-end tests exercise the real runtime binary (set `O4_AGENT_RUNTIME_BIN`). They cover the handshake and capabilities, session create and close, a session resumed by a second runtime process, and rejection of an invalid working directory.
+
+`scripts/run-examples.sh /path/to/o4-agent-runtime` runs every example against a real runtime with its built-in offline test model, so it needs no provider account: one-shot and persistent sessions, a schema run, live progress, resuming after a restart, an MCP server, and approving and refusing a file write. CI runs it against the published runtime.
 
 ## Security notes
 
 - The SDK never handles provider API keys; the runtime does, within its own process.
 - Execution policy is enforced by the runtime, fail-closed -- the SDK only declares intent.
+- A stdio MCP server runs as an ordinary process outside the session's sandbox; configure only servers you trust.
 - Runtime stderr is captured into a bounded, redacted buffer.
 - The JSONL transport carries no terminal control sequences, so it is safe to bridge over untrusted byte streams.

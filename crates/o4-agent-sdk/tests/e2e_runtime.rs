@@ -172,6 +172,78 @@ async fn durable_context_survives_two_distinct_runtime_processes() {
         .expect("stop second runtime process");
 }
 
+/// Cancel a run while its write waits for approval: the run must end
+/// `Cancelled` and the file must not be written. The offline test model
+/// answers instantly, so an approval is the only way to hold a run open
+/// long enough to cancel it.
+///
+/// Runtimes 0.3.21 to 0.3.34 sometimes send the approval request and a run
+/// event out of order; this test then fails with "event sequence N is not
+/// greater than previous sequence M". That is a runtime bug, not this test;
+/// CI retries the end-to-end tests once when that is the only failure.
+#[tokio::test]
+async fn cancelling_a_run_waiting_for_approval_stops_it() {
+    let Some(binary) = runtime_binary() else {
+        eprintln!("skipping: o4-agent-runtime binary not found");
+        return;
+    };
+    let data_dir = tempfile::tempdir().expect("temporary runtime data directory");
+    let workspace = tempfile::tempdir().expect("temporary workspace");
+    let client = Client::connect(LocalRuntime::new(&binary).data_dir(data_dir.path()))
+        .await
+        .expect("connect runtime");
+    let mut approvals = client.approvals().await.expect("approval stream");
+    let session = client
+        .create_session(
+            SessionOptions::new("open4rena-smoke:open4rena-usage-smoke", workspace.path())
+                .execution_policy(ExecutionPolicy {
+                    sandbox_mode: SandboxMode::WorkspaceWrite,
+                    interactive_approvals: true,
+                    ..ExecutionPolicy::default()
+                }),
+        )
+        .await
+        .expect("create session");
+    let mut run = session
+        .run("O4_EVAL_HARNESS_WRITE_SMOKE")
+        .await
+        .expect("start run");
+
+    let request = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            tokio::select! {
+                request = approvals.next_request() => break request,
+                event = run.next_event() => {
+                    event.expect("run event").expect("the run waits for approval before ending");
+                }
+            }
+        }
+    })
+    .await
+    .expect("an approval request within 30s")
+    .expect("an approval request");
+    assert_eq!(request.tool(), "write");
+
+    let limit = std::time::Duration::from_secs(30);
+    tokio::time::timeout(limit, run.cancel())
+        .await
+        .expect("the cancel request is answered within 30s")
+        .expect("cancel the waiting run");
+    let result = tokio::time::timeout(limit, run.final_result())
+        .await
+        .expect("the cancelled run ends within 30s")
+        .expect("run result");
+    assert_eq!(result.status, RunStatus::Cancelled);
+    assert!(
+        !workspace.path().join("eval-harness-smoke.txt").exists(),
+        "a cancelled run must not write the file"
+    );
+
+    // Closing the session releases the request the cancelled run left behind.
+    session.close().await.expect("close session");
+    client.shutdown().await.expect("clean shutdown");
+}
+
 #[tokio::test]
 async fn invalid_cwd_is_rejected_with_typed_error() {
     let Some(client) = connect().await else {

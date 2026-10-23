@@ -8,14 +8,16 @@ Attach `ExecutionPolicy` when creating the session with `SessionOptions::executi
 
 | Field | Meaning |
 |---|---|
-| `allowed_tools` | Explicit grants beyond the runtime's secure baseline; **not** a replacement for all baseline tools |
-| `denied_tools` | Tools to remove, including otherwise baseline tools |
+| `allowed_tools` | Empty: the sandbox mode's baseline tools. Non-empty: **only** the listed tools, which replaces the baseline (see below) |
+| `denied_tools` | Tools to remove, including otherwise baseline tools; a tool both allowed and denied is an error |
 | `sandbox_mode` | `ReadOnly` (default), `WorkspaceWrite`, or `Disabled` |
 | `sandbox_config` | Optional runtime-specific JSON configuration; use a documented, verified schema for that runtime, not guessed keys |
 | `allowed_domains` | Explicit network grants interpreted by runtime policy; empty is not unrestricted access |
 | `interactive_approvals` | Opt in to permission requests; default false, requires runtime support and an active approval handler |
 
-Empty allow lists mean **no explicit grants**, not "all tools/domains" and not "no tools whatsoever." Static policy and sandbox enforcement still apply. Unknown or ambiguous tool names are rejected instead of silently weakening policy. Do not claim an `allowed_tools` list alone is an exhaustive allowlist.
+With `allowed_tools` empty, the session gets the sandbox mode's baseline: under `ReadOnly`, the read-only file tools, internal helpers, the `agent` delegation tool, and network tools only when `allowed_domains` is set; `WorkspaceWrite` adds the file-writing tools. With `allowed_tools` non-empty, the session gets exactly the listed tools and nothing from the baseline, so name every tool the job needs, including `read`, `ls`, `glob`, and `grep`. Verified on runtime 0.3.21: a `WorkspaceWrite` session allowing only `read` could not write.
+
+Other rules in runtimes 0.3.21 to 0.3.34: an unknown or ambiguous tool name fails session creation instead of being ignored; a `ReadOnly` policy cannot grant a file-writing or process tool; process tools such as `bash` need an explicit grant and an enforcing OS sandbox; network tools need at least one `allowed_domains` entry. An empty `allowed_domains` grants no network access. Never treat a successful session creation as proof that a tool is present: verify behavior.
 
 A conservative starting point for a user-approved read-only application is:
 
@@ -31,7 +33,7 @@ fn read_only_options(model: &str, cwd: &std::path::Path) -> SessionOptions {
 }
 ```
 
-This is a starting policy, not proof of complete isolation. Review every assembled capability, including plugins, MCP tools, process execution, and delegation, against the application's threat model. In restricted profiles the runtime rejects capabilities it cannot enforce. Tool provenance is host-owned: an MCP/plugin tool cannot acquire a built-in's privileges by reusing its name.
+This is a starting policy, not proof of complete isolation. `ReadOnly` already leaves out the denied tools; listing them protects the session if its mode is later loosened. The baseline still includes the `agent` delegation tool; deny `agent` too when delegation is not wanted. Review every assembled capability, including plugins, MCP tools, process execution, and delegation, against the application's threat model. In restricted profiles the runtime rejects capabilities it cannot enforce. Tool provenance is host-owned: an MCP/plugin tool cannot acquire a built-in's privileges by reusing its name.
 
 For a coding job allowed to modify its project, discuss `WorkspaceWrite` and narrowly scoped grants with the user. Do not switch to `Disabled` or grant arbitrary shell/network access as a fallback. Verify allowed **and denied** behavior in a disposable workspace; a successfully serialized policy is not proof of runtime enforcement.
 
@@ -44,6 +46,10 @@ Before setting `interactive_approvals: true`, read [Hosted sessions, work, and a
 ## Session-owned MCP servers
 
 `SessionOptions::mcp_server(config)` appends a server; it can be called repeatedly. MCP startup is transactional: a configured startup failure fails session creation and tears down servers already started. Session teardown owns the connections. The model calls exposed MCP tools through the runtime; the SDK does not expose a separate `client.call_tool()` API.
+
+**Grant MCP tools by name.** In runtimes 0.3.21 to 0.3.34 the runtime names each MCP tool `<server name>__<tool name>`, such as `workspace-tools__search` for a server named `workspace-tools`. Unless `sandbox_mode` is `Disabled`, a session keeps an MCP tool only if `allowed_tools` names it that way, and session creation fails when no MCP tool from any configured server is named. With several servers, one whose tools are all unnamed still starts, and its tools are dropped without a warning. With `allowed_tools` empty, the runtime refuses the session before starting any server. Because a non-empty list replaces the baseline, also name the built-in tools the job needs; for example, `vec!["workspace-tools__search".into(), "read".into(), "ls".into(), "glob".into(), "grep".into()]`. Granting MCP tools is not a reason to choose `Disabled`. The [mcp_tools example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/mcp_tools.rs) runs this against a small local server.
+
+**A stdio server is not sandboxed.** The runtime starts it as an ordinary process that runs outside the session's sandbox, before any model turn, even in a `ReadOnly` session: verified on runtime 0.3.21, where a server started by a read-only session wrote a file in the workspace. Its permissions are those of the runtime process. Treat configuring a server as running that program with the application's privileges, and only configure servers you trust. The runtime gives a stdio server a reduced environment (basic variables such as `PATH` and `HOME`, plus its `env` entries), not the runtime's provider keys. Interactive approval applies to the model's MCP tool calls, not to the server process itself.
 
 Require the runtime's `mcp` capability when MCP is essential. The protocol supports three variants below, but a generic capability is not a transport-specific version guarantee: verify the chosen runtime with the actual server. The SDK has no separate minimum-runtime or capability constant specifically for Streamable HTTP.
 
@@ -70,7 +76,7 @@ fn stdio_server(
 }
 ```
 
-Use an installed, verified executable and explicitly scoped server arguments (for example, the intended filesystem root). Do not silently install packages with an unpinned `npx -y` command. The fields are `name`, `command`, `args`, `env`, and optional `cwd`. `env` values are literal process environment values, not an SDK secret-store or interpolation syntax. Keep secrets out of arguments and out of saved definitions whenever possible; understand the runtime/server credential flow before using this field for credentials.
+Use an installed, verified executable and explicitly scoped server arguments (for example, the intended filesystem root). Do not silently install packages with an unpinned `npx -y` command. The fields are `name`, `command`, `args`, `env`, and optional `cwd`. `command` is looked up on the `PATH` the runtime passes to the server, so prefer an absolute path. `env` values are literal process environment values, not an SDK secret-store or interpolation syntax. Keep secrets out of arguments and out of saved definitions whenever possible; understand the runtime/server credential flow before using this field for credentials.
 
 ### SSE
 
@@ -119,8 +125,8 @@ There is **no** public Rust `Session::spawn_agent` or `Client::agent` method. Wh
 For the recorded runtime behavior:
 
 - The root is depth 0; children can exist at depths 1–3. A depth-3 agent cannot spawn another. This is a fixed runtime limit, not an SDK `max_depth` option.
-- Children inherit the parent's effective model/reasoning, credential resolution, filesystem policy, hooks, and MCP configuration. They must not gain broader access than the parent.
-- The agent tool is part of the runtime's secure baseline; deny `agent` explicitly when delegation is not wanted.
-- With interactive approvals enabled, child approval requests use the same application approval path. Without it, a child needing approval fails closed instead of waiting for a nonexistent operator.
+- Children inherit the parent's effective model/reasoning, credential resolution, filesystem policy, hooks, and MCP configuration.
+- **Tool lists and approvals do not reach most children (runtimes 0.3.21 to 0.3.34; read from the runtime source, not tested).** A child whose agent definition sets no permission mode, including the built-in `General` agent, gets a fixed toolset (`read`, `glob`, `ls`, `grep`, `write`, `edit`, `bash`, `fetch`, `web_search`, `git_info`), whatever the session's `allowed_tools` and `denied_tools` say. Its tool calls raise no approval requests, even with `interactive_approvals` on; only the `agent` call itself waits for an answer. The session's filesystem policy and command sandbox still apply. When tool restrictions or approvals matter, leave `agent` out of the session.
+- The agent tool is part of the runtime's secure baseline; deny `agent` explicitly when delegation is not wanted. A non-empty `allowed_tools` list that does not name `agent` also leaves it out.
 
 Ask for delegation only when it helps the task and fits approved access/cost limits. Do not promise a specific decomposition, parallelism level, or SDK child handle merely because the prompt requests it. Work tracking, when advertised, can expose runtime registry rows for sub-agents; see [Hosted sessions and work](hosted-sessions-work-and-approvals.md).

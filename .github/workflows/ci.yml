@@ -1,0 +1,171 @@
+name: CI
+
+# Checks that the SDK, its examples and the coding-agent skill still work.
+# Needs no secrets and no provider account: the published runtime's built-in
+# offline test model stands in for a real model.
+#
+# Runs on GitHub's machines only. This repository is public, so a
+# self-hosted runner would run code from anyone's pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Explicit bash adds pipefail, so `cargo test | tee` fails when cargo does.
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Format, lint and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, pinned 2026-08-23
+        with:
+          toolchain: "1.98"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --all-targets --locked
+      # The README, docs/ and skill guides; --all-targets skips doctests.
+      - run: cargo test --workspace --doc --locked
+
+  minimum-rust:
+    name: Builds with the minimum supported Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, pinned 2026-08-23
+        with:
+          toolchain: "1.88" # rust-version in Cargo.toml
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo check --workspace --all-targets --locked
+
+  published-runtime:
+    name: Examples and skill on published o4 (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+          - os: macos-latest
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, pinned 2026-08-23
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Download the published runtime and o4
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          # The release this SDK is pinned to.
+          version=$(sed -n 's/^runtime_version = "\(.*\)"$/\1/p' compatibility.toml)
+          [ -n "$version" ] || { echo "no runtime_version in compatibility.toml" >&2; exit 1; }
+          # The expected checksums are kept in this repository, not taken
+          # from the release, so a replaced archive cannot pass.
+          sums="$GITHUB_WORKSPACE/.github/runtime-checksums.txt"
+          grep -qx "# version $version" "$sums" || {
+            echo "$sums is not for runtime $version; update it when re-pinning" >&2
+            exit 1
+          }
+          base="https://github.com/Open4rena/o4-releases/releases/download/v${version}"
+          mkdir -p "$RUNNER_TEMP/o4"
+          cd "$RUNNER_TEMP/o4"
+          for archive in "o4-agent-runtime-${PLATFORM}.tar.gz" "o4-${PLATFORM}.tar.gz"; do
+            curl -fsSL --retry 3 -o "$archive" "$base/$archive"
+            # The archive must match before anything is extracted.
+            expected=$(awk -v name="$archive" '$2 == name {print $1}' "$sums")
+            [ -n "$expected" ] || { echo "no checksum for $archive in $sums" >&2; exit 1; }
+            if command -v sha256sum >/dev/null; then
+              actual=$(sha256sum "$archive" | awk '{print $1}')
+            else
+              actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+            fi
+            [ "$expected" = "$actual" ] || { echo "checksum mismatch: $archive" >&2; exit 1; }
+            tar -xzf "$archive"
+          done
+          mv "o4-${PLATFORM}" o4
+          echo "O4_AGENT_RUNTIME_BIN=$RUNNER_TEMP/o4/o4-agent-runtime" >> "$GITHUB_ENV"
+          echo "O4_CLI=$RUNNER_TEMP/o4/o4" >> "$GITHUB_ENV"
+          echo "runtime and o4 $version"
+
+      - name: End-to-end tests against the runtime
+        run: |
+          set -euo pipefail
+          e2e() { cargo test -p o4-agent-sdk --test e2e_runtime --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/e2e.log"; }
+          # Runtimes 0.3.21 to 0.3.34 sometimes send an approval event out of
+          # order (a runtime bug; see scripts/run-examples.sh). A run that
+          # fails with exactly that error, and nothing else, is retried once.
+          if ! e2e; then
+            if grep -q "is not greater than previous sequence" "$RUNNER_TEMP/e2e.log" &&
+              grep -q "test result: FAILED. 4 passed; 1 failed" "$RUNNER_TEMP/e2e.log"; then
+              echo "::warning::the runtime sent events out of order (known runtime bug); running the end-to-end tests again"
+              e2e
+            else
+              exit 1
+            fi
+          fi
+      - name: Every end-to-end test ran
+        run: |
+          if grep -q "skipping:" "$RUNNER_TEMP/e2e.log"; then
+            echo "an end-to-end test skipped instead of running" >&2
+            exit 1
+          fi
+          # Each test above is a real run against the runtime; zero tests
+          # passing would also show no skips. Update the count with the tests.
+          grep -q "test result: ok. 5 passed" "$RUNNER_TEMP/e2e.log" || {
+            echo "expected all 5 end-to-end tests to pass" >&2
+            exit 1
+          }
+
+      - name: Run every example
+        run: scripts/run-examples.sh "$O4_AGENT_RUNTIME_BIN"
+
+      - name: Install the skill with o4
+        run: |
+          set -euo pipefail
+          # Install a copy of the manifest and skill into an empty home, then
+          # check o4 found the one skill and copied it intact.
+          stage="$RUNNER_TEMP/plugin/o4-agent-sdk"
+          home="$RUNNER_TEMP/plugin-home"
+          mkdir -p "$stage" "$home/.o4/plugins"
+          cp plugin.json "$stage/"
+          cp -R skills "$stage/"
+          export HOME="$home"
+          cd "$RUNNER_TEMP"
+          "$O4_CLI" --version
+          "$O4_CLI" plugin install "$stage" | tee install.log
+          grep -q "Installed plugin 'o4-agent-sdk'.*1 skills" install.log
+          "$O4_CLI" plugin list | tee list.log
+          grep -q "^o4-agent-sdk " list.log
+          diff -r "$GITHUB_WORKSPACE/skills" "$home/.o4/plugins/o4-agent-sdk/skills"

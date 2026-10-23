@@ -30,7 +30,7 @@ async fn summarize(client: &Client, model: &str, cwd: &Path) -> o4_agent_sdk::Re
 
 ## Durable, multi-turn conversations
 
-`SessionOptions::new(model, cwd)` selects the model and workspace. Additional builders are `session_id`, `system_prompt`, `reasoning`, `execution_policy`, `mcp_server` (repeatable), and `context`. Its fields are also public. Let the runtime assign an ID unless the application has a collision-safe ID scheme.
+`SessionOptions::new(model, cwd)` selects the model and workspace. Additional builders are `session_id`, `system_prompt`, `reasoning`, `execution_policy`, `mcp_server` (repeatable; it appends to the public `mcp_servers` list), and `context`. Its fields are also public. Let the runtime assign an ID unless the application has a collision-safe ID scheme.
 
 `Reasoning::{Minimal, Low, Medium, High}` requests an effort level; actual support depends on the model. Do not change the user's model/effort without a reason and approval.
 
@@ -90,11 +90,15 @@ async fn continue_conversation(
 
 Persist the returned ID through the application's storage, then shut down the first owned runtime. Connect another runtime with the **same** `LocalRuntime::data_dir` and call the resume helper. Keep provider setup and the original workspace available too.
 
-`Session::close()` unloads the session; saved state remains resumable. `ResumeOptions::cwd` **asserts** the recorded directory and fails on a mismatch: it cannot move the session. Omitting it accepts the saved directory. Resume options expose only `cwd` and `context`; they do not override the saved model, prompt, policy, or MCP definition.
+`Session::close()` unloads the session; saved state remains resumable. `ResumeOptions::cwd` **asserts** the recorded directory and fails on a mismatch: it cannot move the session. The check runs only when the session is loaded from disk; resuming a session that is still loaded in the same runtime does not compare the directory. Omitting `cwd` accepts the saved directory. Resume options expose only `cwd` and `context`; they do not override the saved model, prompt, policy, or MCP definition.
+
+Resume failures arrive as `Error::Runtime`. Runtimes 0.3.21 to 0.3.34 use the code `session_resume_failed` both for an unknown session ID and for a directory mismatch, so tell them apart by checking the state directory and saved ID, not by the code. The [resume_after_restart example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/resume_after_restart.rs) persists the ID and resumes from a new runtime process.
 
 ## Structured output and bounded jobs
 
 Use `Session::run_with_options`, not the one-shot helper, when a job needs `RunOptions`. Request the `structured_output` runtime capability before relying on schema output. Limit enforcement and validation still belong to the runtime; verify behavior with the chosen model/runtime.
+
+**Runtime 0.3.21 to 0.3.34 limitation:** a schema run fails at once, with output starting `invalid output schema: execution policy ... names unknown tool`, whenever the session's `ExecutionPolicy` lists any tool in `allowed_tools` or `denied_tools`. Run schema jobs in a session whose policy leaves both lists empty (the default, or a `sandbox_mode` change alone), and keep any restricted tool list for separate sessions. Verify on the runtime you deploy; a fix would remove this limit.
 
 ```rust,no_run
 use std::path::Path;
@@ -132,7 +136,7 @@ async fn bounded_report(
 }
 ```
 
-Before consuming application data, check `result.status == RunStatus::Completed`, require `result.structured_output`, and deserialize/validate it for the application's own rules. Do not silently fall back to parsing prose if a schema result was required.
+Before consuming application data, check `result.status == RunStatus::Completed`, require `result.structured_output`, and deserialize/validate it for the application's own rules. Do not silently fall back to parsing prose if a schema result was required. If the model never supplies a valid value, the runtime fails the run with the output `model did not produce valid structured output`. The [structured_report example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/structured_report.rs) shows these checks end to end.
 
 `RunResult` contains `status`, `output`, optional `structured_output`, `messages` (JSON values), `usage`, `turns`, and `tool_calls`. `Usage` reports `input_tokens`, `output_tokens`, `total_tokens`, `cached_input_tokens`, and optional `cost_usd`; missing cost is unknown, not necessarily free.
 
@@ -146,6 +150,8 @@ Before consuming application data, check `result.status == RunStatus::Completed`
 - `ToolStarted`, `ToolUpdated`, `ToolCompleted`: `tool_call` is a whole JSON snapshot too; it is not a direct SDK tool-invocation API.
 - Lifecycle/diagnostic events include run/agent/turn start, warnings, retries, router diagnostics, context compaction, resource limits, steering confirmation, and completion/errors.
 - Preserve forward compatibility with a wildcard or explicit `Event::Unknown` handling. Do not crash because an additive event is unfamiliar.
+
+The snapshot JSON belongs to the runtime, not the SDK's typed API; read it defensively. Runtimes 0.3.21 to 0.3.34 send messages with `role` and a `content` array whose text blocks are `{"type": "text", "text": ...}`, and tool snapshots with `name` plus `arguments` (started), `partial_result` (updated), or `result` and `is_error` (completed). Tool arguments and results can contain file contents, commands and secrets. The [live_progress example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/live_progress.rs) renders these snapshots.
 
 The following minimal controller accepts user instructions from an application channel and reports control-command errors separately from the run's terminal result. It prints only event types, not potentially sensitive payloads. The caller must inspect both outputs: a completed run does not imply a requested steer/cancel succeeded.
 
@@ -206,3 +212,5 @@ Active-run queues are bounded (256 events in this SDK). Failing to consume them 
 `Error::RunFinished` covers a control request begun after the SDK already knows the run is terminal. Completion can also race after the command is sent; the recorded runtime returns `Error::Runtime` with code `run_not_found` when cancel/steer finds no active run. That does not prove success or a terminal status by itself. The controller preserves every control error, stops accepting further commands, and drains the run outcome separately. Do not discard an unrelated runtime error or drop a usable handle just because a control request failed. A broken connection or a peer that never answers still needs application-level deadlines and cleanup.
 
 On a controller error, the caller still owns session/runtime cleanup. Explicitly cancel an active run when appropriate and close the session; shut down only runtimes the application owns.
+
+Do not use Ctrl-C (SIGINT) as the trigger for a graceful cancel of a `LocalRuntime` in a terminal. The terminal delivers the signal to the whole foreground process group, which includes the runtime; it exits at once, so the run ends with `Error::RuntimeExited` rather than `Cancelled`. Use another trigger (the example cancels on Enter), or run the runtime in a separate process group, which `LocalRuntime` does not offer. A Ctrl-C handler is still useful for prompt local cleanup.

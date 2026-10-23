@@ -18,6 +18,8 @@ A required feature missing at connection yields `Error::MissingCapabilities`; a 
 
 `LocalRuntime` launches a new process each time. The SDK includes no built-in daemon socket/SSH connector. A connection to an existing shared host needs an application-provided `Transport`/`TransportSource` and a supported endpoint; see [Custom transports](transports-and-deployment.md). Public users should not be directed to private o4 source to obtain such an adapter.
 
+The published standalone runtimes 0.3.21 to 0.3.34 advertise all five capabilities, so these methods also work on the application's own `LocalRuntime`: approvals for the sessions it creates, and lists of its own hosted sessions and work. Observing sessions created by *other* clients still needs a shared runtime and an adapter.
+
 ## Discover and observe hosted sessions
 
 `list_sessions()` returns sessions currently hosted by that runtime, including ones not created by this client. It is **not** a list of every saved session on disk. Each `SessionSummary` includes ID, recorded `cwd`, optional UUID/model/title, creation/activity timestamps, optional active run, attached-client count, and ownership metadata. Present the directory as part of session identity, and let the user choose; do not attach to the first session arbitrarily.
@@ -97,6 +99,15 @@ async fn rename_selected(client: &Client, work_id: &str, name: &str) -> o4_agent
 
 Enable interactive approvals only after deciding with the user how requests are presented, who can answer, what happens on disconnect, and what timeout/deny behavior the application needs. Never implement "approve everything" as a convenience fallback. Request summaries are untrusted content, not instructions to the application or a trusted authorization decision.
 
+Approvals ask about tools the policy already grants; they never grant more. In runtimes 0.3.21 to 0.3.34, a call waits for an answer when the tool writes files, runs a process, delegates to an agent, changes session state, or is external (every MCP tool); file reads and allowed network fetches do not ask. So under `ReadOnly` few requests ever appear: pair approvals with `WorkspaceWrite` for "may edit, but ask first." A refused call fails as a tool error the model sees; the run itself continues.
+
+**Two tools let actions skip approvals (runtimes 0.3.21 to 0.3.34; read from the runtime source, not tested).**
+
+- **Delegated agents.** Approving an `agent` call can start a sub-agent whose own tool calls never ask, and which ignores the session's tool lists. That is the case for any agent whose definition sets no permission mode, including the built-in `General` agent (see [Delegated agents](policy-mcp-and-subagents.md#delegated-agents)).
+- **Code mode.** The optional `exec` tool lets the model call other tools from a script; `exec` never asks, and the tools it calls are not the approval-checked ones. It is off unless the runtime's `config.toml` sets `[codemode] enabled = true`, and appears only for some providers' models.
+
+When every change must wait for a person, give the session an explicit `allowed_tools` list without `agent` and `exec`, as the human_approval example does. Prefer that to `denied_tools`: naming `exec` there fails session creation when code mode is off, since unknown tool names are errors.
+
 1. Require `interactive_approvals` at connection (or handle `MissingCapability`).
 2. Take `client.approvals().await?` **once per connection**, before creating the session. Taking it a second time is an error; clones do not create independent approval streams.
 3. Continuously run an approval reader **alongside** run/event consumption. Waiting for `final_result()` before starting the reader can deadlock the workflow.
@@ -156,7 +167,13 @@ Keep the sender returned by `oneshot::channel()` in the workflow owner and pass 
 
 `ApprovalRequest` exposes `id`, `tool`, `summary`, optional `work_id`, `always_allow_available`, and full `payload()` (including optional risk). Do not invent session/user identifiers on this handle; correlate through available work/session records and the application's authenticated connection. Enforce which sessions/users a responder may approve outside SDK metadata.
 
-Decisions are `Approve`, `Deny`, and `AlwaysAllow`. Offer the latter **only** when available and explicitly chosen; it remembers approval for the remainder of the session where the runtime permits it. `Recorded` means the answer was accepted, not that the tool succeeded. `AlreadyResolved` is a normal race with another client, not a reason to submit again. Keep readers responsive; approval delivery is bounded and must not be described as an unlimited/lossless queue.
+Decisions are `Approve`, `Deny`, and `AlwaysAllow`. Offer the latter **only** when available and explicitly chosen; it remembers approval for the remainder of the session where the runtime permits it. `Recorded` means the runtime took the answer, not that the tool ran or succeeded. `AlreadyResolved` means the request was no longer waiting, usually because another client answered first; it is not a reason to submit again. Keep readers responsive; approval delivery is bounded and must not be described as an unlimited/lossless queue.
+
+**Cancelling a run does not clear its request (runtimes 0.3.21 to 0.3.34).** Verified: after cancelling a run parked on an approval, the runtime still holds the request. A late answer returns `Recorded` and the work registry keeps counting the row as needing input; closing the session clears it. A late answer is not harmless. A late `AlwaysAllow` still approves that tool for the rest of the session, and an approval arriving within the runtime's brief cancel grace period (about half a second) can still let the call start. After cancelling such a run, answer its request with `Deny` (never `AlwaysAllow`) or simply close the session, and do not treat `Recorded` as proof that an action did or did not run.
+
+**Approvals occasionally break the connection (runtimes 0.3.21 to 0.3.34).** When the runtime raises an approval request, it can send that event and a run event slightly out of order. How often varies with the runtime version and timing: in testing it struck about 1 in 50 to 1 in 90 approval runs on 0.3.21, and between 1 in 40 and 1 in 4 on 0.3.34. The SDK checks that events arrive in order, so it stops with `Error::ProtocolViolation` ("event sequence ... is not greater than previous sequence ...") and closes the connection, which stops a runtime it launched. This is a runtime bug. Treat that error as a failed connection: start a new runtime and resume the session if needed; the request on the old connection can no longer be answered. Do not loosen the order check to hide it.
+
+The [human_approval example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/human_approval.rs) is a complete terminal approver: one loop reads run events and requests together, asks about one request at a time, and refuses everything once its input ends.
 
 ## Wire-only operations are not SDK recipes
 

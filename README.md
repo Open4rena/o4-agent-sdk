@@ -41,7 +41,7 @@ use o4_agent_sdk::{Client, Event, LocalRuntime, SessionOptions};
 
 #[tokio::main]
 async fn main() -> o4_agent_sdk::Result<()> {
-    let client = Client::connect(LocalRuntime::new("o4-agent-runtime")).await?;
+    let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
 
     let options = SessionOptions::new("claude-sonnet-4-6", "/tmp");
     let mut handle = client
@@ -64,6 +64,30 @@ async fn main() -> o4_agent_sdk::Result<()> {
 }
 ```
 
+## Examples
+
+Complete programs in [`crates/o4-agent-sdk/examples/`](crates/o4-agent-sdk/examples). Run one from a checkout of this repository:
+
+```sh
+cargo run -p o4-agent-sdk --example live_progress -- /path/to/o4-agent-runtime claude-sonnet-4-6
+```
+
+| Example | What it shows |
+|---|---|
+| [`one_shot`](crates/o4-agent-sdk/examples/one_shot.rs) | One prompt with streamed output |
+| [`persistent`](crates/o4-agent-sdk/examples/persistent.rs) | Several turns in one session, then closing and resuming it |
+| [`live_progress`](crates/o4-agent-sdk/examples/live_progress.rs) | Live text and tool progress; press Enter to cancel |
+| [`structured_report`](crates/o4-agent-sdk/examples/structured_report.rs) | A JSON report checked against a schema, with turn, token and time limits |
+| [`resume_after_restart`](crates/o4-agent-sdk/examples/resume_after_restart.rs) | A conversation that continues after the program restarts |
+| [`mcp_tools`](crates/o4-agent-sdk/examples/mcp_tools.rs) | Tools from an MCP server, including the bundled example server |
+| [`human_approval`](crates/o4-agent-sdk/examples/human_approval.rs) | A person approves each file change before it happens (file tools only) |
+
+Each takes the runtime path and a model name. The model `open4rena-smoke:open4rena-usage-smoke`, built into the runtime, needs no provider account: it gives fixed test replies, never real answers. To run every example that way, as CI does:
+
+```sh
+scripts/run-examples.sh /path/to/o4-agent-runtime
+```
+
 ## Usage
 
 ### One-shot run
@@ -75,7 +99,7 @@ use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
 
 let result = client
     .run(
@@ -99,7 +123,7 @@ use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
 
 let session = client
     .create_session(SessionOptions::new("claude-sonnet-4-6", "/tmp"))
@@ -122,7 +146,7 @@ use o4_agent_sdk::{Client, LocalRuntime, ResumeOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
 let session = client
     .resume_session("session-id", ResumeOptions::default())
     .await?;
@@ -140,7 +164,7 @@ The skill is guidance for the coding agent working on **your application**. It d
 
 ### Install in o4
 
-With an o4 release supporting Agent Plugins v1 manifests:
+CI checks this installation with o4 0.3.21. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
 
 ```sh
 mkdir -p "$HOME/.o4/plugins"
@@ -176,6 +200,8 @@ Keep one installed copy to avoid duplicate names; do not overwrite a customized 
 
 The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.4.1; verify the connected runtime's advertised capabilities before depending on optional features.
 
+CI keeps the skill accurate: it compiles every Rust snippet in the guides, checks that their links still work after installation, fails when a public SDK name is missing from the guides, installs the package with a published o4, and runs the [examples](#examples) the skill points to against a published runtime.
+
 ## Documentation
 
 - [Full SDK documentation](docs/agent-sdk.md) -- core concepts, execution policy, MCP, the wire protocol, and error handling.
@@ -193,8 +219,12 @@ The integration suite uses an in-memory fake JSONL runtime and needs no provider
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
+cargo test --workspace --doc    # compiles the Rust code in the README, docs and skill
 cargo clippy --workspace --all-targets -- -D warnings
+scripts/run-examples.sh /path/to/o4-agent-runtime    # needs python3
 ```
+
+[CI](.github/workflows/ci.yml) runs all of these on every push and pull request, using the published runtime named in [`compatibility.toml`](compatibility.toml).
 
 ## License
 

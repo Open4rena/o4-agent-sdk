@@ -79,17 +79,44 @@ The SDK versions **independently** of o4. Read and follow
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
+cargo test --workspace --doc
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 - The integration suite uses an in-memory fake JSONL runtime and needs **no**
   provider API keys.
+- `cargo test --workspace --doc` compiles the Rust code in `README.md`,
+  `docs/` and the skill's guides (listed at the end of
+  `crates/o4-agent-sdk/src/lib.rs`). `--all-targets` does not run doctests.
+- `tests/skill_package.rs` checks the skill package: that o4 can install it,
+  that its links work once installed, and that every public SDK name appears
+  in the guides. Adding a public method means documenting it in
+  `skills/o4-agent-sdk/`.
 - End-to-end tests exercise the real runtime binary; point them at it with
   `O4_AGENT_RUNTIME_BIN=/path/to/o4-agent-runtime`. These must pass (not skip)
   before any release.
+- `scripts/run-examples.sh /path/to/o4-agent-runtime` runs every example
+  against that runtime with its built-in offline test model
+  (`open4rena-smoke:open4rena-usage-smoke`); it needs `python3` but no
+  provider account. A new example needs a check in that script.
 
-Run all three gates before committing code changes. Clippy runs with
+Run all four gates before committing code changes. Clippy runs with
 `-D warnings` -- do not introduce new warnings.
+
+CI (`.github/workflows/ci.yml`) runs the gates on every push and pull
+request, and runs the end-to-end tests, the examples and an
+`o4 plugin install` of the skill against the published o4 release named by
+`runtime_version` in `compatibility.toml`. Re-pinning that version re-points
+CI; also replace `.github/runtime-checksums.txt` with the new release's
+checksums, or CI refuses the download. Keep the workflow's actions pinned to
+full commit SHAs.
+
+Runtimes 0.3.21 to 0.3.34 sometimes send an approval event out of order, so
+an approval run fails with "event sequence N is not greater than previous
+sequence M". That is a runtime bug, not an SDK one. CI and
+`scripts/run-examples.sh` retry such a run once, only when that is the sole
+failure, and say so in the output. Remove both retries once a pinned runtime
+fixes the bug; never loosen the SDK's order check instead.
 
 ## Commit conventions
 

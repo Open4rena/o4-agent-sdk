@@ -33,3 +33,30 @@ pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 /// `compatibility.toml`; `compatibility_pin_matches_compiled_default` fails if
 /// the two drift apart.
 pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <1.0.0";
+
+// The Rust code in the README, docs/ and the coding-agent skill's guides,
+// compiled by `cargo test --doc` so it cannot drift from the API. Not part of
+// any normal build. `tests/skill_package.rs` checks every such file with Rust
+// code is listed here.
+#[cfg(doctest)]
+mod documentation_examples {
+    #[doc = include_str!("../../../README.md")]
+    pub struct Readme;
+
+    #[doc = include_str!("../../../docs/agent-sdk.md")]
+    pub struct SdkDocumentation;
+
+    #[doc = include_str!("../../../skills/o4-agent-sdk/references/sessions-and-runs.md")]
+    pub struct SessionsAndRuns;
+
+    #[doc = include_str!("../../../skills/o4-agent-sdk/references/policy-mcp-and-subagents.md")]
+    pub struct PolicyMcpAndSubagents;
+
+    #[doc = include_str!(
+        "../../../skills/o4-agent-sdk/references/hosted-sessions-work-and-approvals.md"
+    )]
+    pub struct HostedSessionsWorkAndApprovals;
+
+    #[doc = include_str!("../../../skills/o4-agent-sdk/references/transports-and-deployment.md")]
+    pub struct TransportsAndDeployment;
+}
