@@ -836,6 +836,68 @@ async fn malformed_output_fails_all_pending_handles() {
     assert!(state.aborted.load(Ordering::Acquire));
 }
 
+/// A request started just as the connection fails must still end, with the
+/// connection's error, instead of waiting forever.
+///
+/// The client checks that the connection is healthy, prepares the request,
+/// then registers it to receive its events. If the connection failed in
+/// between, the failure went unnoticed by that one request: it was sent,
+/// and then waited for events that could never come. A large prompt makes
+/// the preparation, and so the gap, long enough to hit reliably.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_racing_a_connection_failure_never_waits_forever() {
+    let prompt = "x".repeat(32 * 1024 * 1024);
+    for attempt in 0..10 {
+        let (transport, mut peer, _) = memory_pair("");
+        let client = {
+            let runtime = tokio::spawn(async move {
+                handshake(&mut peer).await;
+                let create = peer.request().await;
+                peer.send(
+                    &create.request_id,
+                    Some("session-race"),
+                    None,
+                    Event::SessionCreated(SessionEvent::default()),
+                );
+                peer
+            });
+            let client = Client::connect(transport).await.unwrap();
+            let session = client
+                .create_session(SessionOptions::new("o4-test", cwd()))
+                .await
+                .unwrap();
+            let peer = runtime.await.unwrap();
+            (client, session, peer)
+        };
+        let (_client, session, peer) = client;
+
+        let run = tokio::spawn({
+            let prompt = prompt.clone();
+            async move {
+                match session.run(prompt).await {
+                    Ok(run) => run.final_result().await.map(|_| ()),
+                    Err(error) => Err(error),
+                }
+            }
+        });
+        // Fail the connection while the run request is being prepared.
+        tokio::time::sleep(std::time::Duration::from_millis(1 + attempt)).await;
+        peer.send_raw("this is human output, not JSON");
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), run)
+            .await
+            .unwrap_or_else(|_| {
+                panic!("attempt {attempt}: the run waited forever on a failed connection")
+            })
+            .unwrap();
+        assert!(
+            matches!(outcome, Err(Error::MalformedProtocol { .. })),
+            "attempt {attempt}: {outcome:?}"
+        );
+        drop(peer);
+    }
+}
+
 #[tokio::test]
 async fn process_eof_fails_pending_run_with_bounded_diagnostics() {
     let secret_diagnostic = "provider token should be treated as sensitive";

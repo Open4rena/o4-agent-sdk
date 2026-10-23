@@ -1330,9 +1330,6 @@ impl Inner {
         run_control: Option<Arc<RunControl>>,
     ) -> Result<mpsc::Receiver<Result<EventEnvelope>>> {
         let _send_guard = self.send_lock.lock().await;
-        if let Some(error) = lock(&self.terminal_error).clone() {
-            return Err(error);
-        }
         if self.shutdown_acknowledged.load(Ordering::Acquire) {
             return Err(Error::ClientShutdown);
         }
@@ -1353,6 +1350,15 @@ impl Inner {
                 run_control,
             },
         );
+        // Checked after registering, not before: `fail_all` records the error
+        // before ending every registered request, so a connection failure
+        // either ends this request or is visible here. Checking first left a
+        // gap in which a request could miss both and wait forever for events
+        // that can never come.
+        if let Some(error) = lock(&self.terminal_error).clone() {
+            lock(&self.pending).remove(&request_id);
+            return Err(error);
+        }
 
         if let Err(error) = self.transport.send_line(line).await {
             lock(&self.pending).remove(&request_id);
