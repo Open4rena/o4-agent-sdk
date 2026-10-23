@@ -1164,6 +1164,9 @@ struct PendingRequest {
 struct RunControlState {
     run_id: Option<String>,
     terminal: bool,
+    /// Why the run ended, when it ended because the connection failed
+    /// rather than with its own terminal event.
+    failure: Option<Error>,
 }
 
 struct RunControl {
@@ -1204,6 +1207,14 @@ impl RunControl {
         self.state.send_modify(|state| state.terminal = true);
     }
 
+    /// End the run because the connection failed with `error`.
+    fn fail(&self, error: Error) {
+        self.state.send_modify(|state| {
+            state.terminal = true;
+            state.failure = Some(error);
+        });
+    }
+
     fn is_terminal(&self) -> bool {
         self.state.borrow().terminal
     }
@@ -1212,6 +1223,9 @@ impl RunControl {
         let mut state = self.state.subscribe();
         loop {
             let snapshot = state.borrow().clone();
+            if let Some(error) = snapshot.failure {
+                return Err(error);
+            }
             if snapshot.terminal {
                 return Err(Error::RunFinished {
                     run_id: snapshot.run_id.unwrap_or_else(|| "<not assigned>".into()),
@@ -1504,7 +1518,7 @@ impl Inner {
         let pending = std::mem::take(&mut *lock(&self.pending));
         for (_, request) in pending {
             if let Some(control) = request.run_control {
-                control.finish();
+                control.fail(error.clone());
             }
             let _ = request.sender.try_send(Err(error.clone()));
         }
