@@ -98,7 +98,7 @@ Resume failures arrive as `Error::Runtime`. Runtimes 0.3.21 to 0.3.34 use the co
 
 Use `Session::run_with_options`, not the one-shot helper, when a job needs `RunOptions`. Request the `structured_output` runtime capability before relying on schema output. Limit enforcement and validation still belong to the runtime; verify behavior with the chosen model/runtime.
 
-**Runtime 0.3.21 to 0.3.35 limitation:** a schema run fails at once, with output starting `invalid output schema: execution policy ... names unknown tool`, whenever the session's `ExecutionPolicy` lists any tool in `allowed_tools` or `denied_tools`. Run schema jobs in a session whose policy leaves both lists empty (the default, or a `sandbox_mode` change alone), and keep any restricted tool list for separate sessions. Verify on the runtime you deploy. A fix is due in a future runtime release; none is published yet.
+**Runtime 0.3.21 to 0.3.38 limitation (fixed in 0.3.39):** a schema run fails at once, with output starting `invalid output schema: execution policy ... names unknown tool`, whenever the session's `ExecutionPolicy` lists any tool in `allowed_tools` or `denied_tools`. Run schema jobs in a session whose policy leaves both lists empty (the default, or a `sandbox_mode` change alone), and keep any restricted tool list for separate sessions. On 0.3.39 and later, schema runs work in sessions that list tools. Verify on the runtime you deploy.
 
 ```rust,no_run
 use std::path::Path;

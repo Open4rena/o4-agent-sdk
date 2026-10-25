@@ -67,7 +67,7 @@ async fn supervise(
         .create_session(
             SessionOptions::new(model, env::current_dir()?).execution_policy(ExecutionPolicy {
                 // Only these tools. Leaving out `agent` (sub-agents) and
-                // `exec` (code mode) matters: in runtimes 0.3.21 to 0.3.35 their
+                // `exec` (code mode) matters: in runtimes 0.3.21 to 0.3.38 their
                 // tool calls do not wait for an answer.
                 allowed_tools: ["read", "ls", "glob", "grep", "write", "edit"]
                     .map(String::from)

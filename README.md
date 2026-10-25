@@ -164,7 +164,7 @@ The skill is guidance for the coding agent working on **your application**. It d
 
 ### Install in o4
 
-CI checks this installation with o4 0.3.21. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
+CI checks this installation with o4 0.3.43. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
 
 ```sh
 mkdir -p "$HOME/.o4/plugins"

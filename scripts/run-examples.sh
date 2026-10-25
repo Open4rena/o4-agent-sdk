@@ -210,14 +210,6 @@ fi
 # O4_EVAL_HARNESS_WRITE_SMOKE makes the test model write
 # eval-harness-smoke.txt in the workspace.
 #
-# Known runtime bug (0.3.21 to 0.3.35): approval runs sometimes fail with
-# "event sequence N is not greater than previous sequence M", because the
-# runtime sends two events out of order (1 in 50 to 1 in 90 runs on the pinned
-# 0.3.21, and 1 in 40 to 1 in 4 on 0.3.34). The SDK is right to stop. A run
-# that fails with exactly that error is retried once, in a fresh workspace,
-# and the retry is reported; any other failure, or a second one, counts.
-runtime_order_bug='is not greater than previous sequence'
-#
 # approval <name> <file-expected: yes|no> <input> <text>...: run the example
 # with <input> as the person's answers, then check whether the file was
 # written and that every text appears in the output.
@@ -228,13 +220,6 @@ approval() {
   dir="$(workspace)"
   printf '%s' "$input" | run 60 "$dir" human_approval "$model" O4_EVAL_HARNESS_WRITE_SMOKE ||
     status=$?
-  if ((status == 1)) && grep -qF -- "$runtime_order_bug" "$log"; then
-    echo "retry   $name: the runtime sent events out of order (known runtime bug); running it again"
-    status=0
-    dir="$(workspace)"
-    printf '%s' "$input" | run 60 "$dir" human_approval "$model" O4_EVAL_HARNESS_WRITE_SMOKE ||
-      status=$?
-  fi
   if ((status != 0)); then
     fail "$name" "exited with status $status"
   elif [[ "$written" == yes && ! -f "$dir/eval-harness-smoke.txt" ]]; then

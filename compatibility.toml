@@ -5,12 +5,12 @@
 # and verified against. Update them deliberately when the runtime changes.
 
 # The o4 repository commit that provides the matching o4-agent-runtime binary.
-# This is the commit tagged v0.3.21, whose o4-agent-runtime-<platform>.tar.gz
-# is published at https://github.com/Open4rena/o4-releases/releases/tag/v0.3.21.
-runtime_commit = "219f08000c93d29b6ea423caec5f595ea49ea937"
+# This is the commit tagged v0.3.43, whose o4-agent-runtime-<platform>.tar.gz
+# is published at https://github.com/Open4rena/o4-releases/releases/tag/v0.3.43.
+runtime_commit = "ea92fb224ae10562e2b30e08c20ac0ac302d02e8"
 
 # The o4 runtime version at that commit.
-runtime_version = "0.3.21"
+runtime_version = "0.3.43"
 
 # The JSONL wire protocol version implemented by both sides.
 protocol_version = 1

@@ -68,8 +68,9 @@ async fn write_report(
     model: &str,
     workspace: PathBuf,
 ) -> Result<(Report, Usage), Box<dyn Error>> {
-    // Runtime 0.3.21 fails schema runs in sessions whose policy lists tools
-    // (`allowed_tools` or `denied_tools`), so this session keeps the default.
+    // Runtimes 0.3.21 to 0.3.38 fail schema runs in sessions whose policy
+    // lists tools (`allowed_tools` or `denied_tools`), so this session keeps
+    // the default.
     let session = client
         .create_session(SessionOptions::new(model, workspace))
         .await?;

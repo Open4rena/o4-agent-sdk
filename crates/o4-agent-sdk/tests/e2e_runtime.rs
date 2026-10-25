@@ -177,10 +177,10 @@ async fn durable_context_survives_two_distinct_runtime_processes() {
 /// answers instantly, so an approval is the only way to hold a run open
 /// long enough to cancel it.
 ///
-/// Runtimes 0.3.21 to 0.3.35 sometimes send the approval request and a run
+/// Runtimes 0.3.21 to 0.3.38 sometimes send the approval request and a run
 /// event out of order; this test then fails with "event sequence N is not
-/// greater than previous sequence M". That is a runtime bug, not this test;
-/// CI retries the end-to-end tests once when that is the only failure.
+/// greater than previous sequence M". That is a runtime bug, fixed in 0.3.39,
+/// not this test.
 #[tokio::test]
 async fn cancelling_a_run_waiting_for_approval_stops_it() {
     let Some(binary) = runtime_binary() else {

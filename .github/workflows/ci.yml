@@ -122,19 +122,7 @@ jobs:
       - name: End-to-end tests against the runtime
         run: |
           set -euo pipefail
-          e2e() { cargo test -p o4-agent-sdk --test e2e_runtime --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/e2e.log"; }
-          # Runtimes 0.3.21 to 0.3.35 sometimes send an approval event out of
-          # order (a runtime bug; see scripts/run-examples.sh). A run that
-          # fails with exactly that error, and nothing else, is retried once.
-          if ! e2e; then
-            if grep -q "is not greater than previous sequence" "$RUNNER_TEMP/e2e.log" &&
-              grep -q "test result: FAILED. 4 passed; 1 failed" "$RUNNER_TEMP/e2e.log"; then
-              echo "::warning::the runtime sent events out of order (known runtime bug); running the end-to-end tests again"
-              e2e
-            else
-              exit 1
-            fi
-          fi
+          cargo test -p o4-agent-sdk --test e2e_runtime --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/e2e.log"
       - name: Every end-to-end test ran
         run: |
           if grep -q "skipping:" "$RUNNER_TEMP/e2e.log"; then
