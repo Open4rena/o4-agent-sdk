@@ -53,7 +53,7 @@ tokio = { version = "1", features = ["full"] }
 You also need the `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum, for `linux-x86_64`, `linux-arm64` and `macos-arm64`. The Linux builds are static and run on any distribution. Pick a version inside the SDK's accepted range (see [Compatibility](#compatibility)):
 
 ```bash
-VERSION=0.3.21
+VERSION=0.3.43
 PLATFORM=linux-x86_64
 BASE=https://github.com/Open4rena/o4-releases/releases/download/v${VERSION}
 curl -fsSLO "${BASE}/o4-agent-runtime-${PLATFORM}.tar.gz"
@@ -221,7 +221,7 @@ Hosted sessions get the `agent` tool from the same shared builder as the interac
 
 - **Depth** is capped at 3. The root session is depth 0, children exist at depths 1-3, and a depth-3 agent cannot spawn further. The cap is a fixed constant.
 - **Inheritance:** a child runs under the parent's model and reasoning effort, API-key resolution, the filesystem policy derived from `sandbox_mode`/`sandbox_config`, hooks, and MCP configuration.
-- **Tool lists do not reach children (runtimes 0.3.21 to 0.3.35; read from the runtime source, not tested).** A child whose agent definition sets no permission mode, including the built-in `General` agent, gets a fixed toolset (`read`, `glob`, `ls`, `grep`, `write`, `edit`, `bash`, `fetch`, `web_search`, `git_info`) whatever the session's `allowed_tools` and `denied_tools` say. Its tool calls raise no approval requests, even with `interactive_approvals` on. The filesystem policy and command sandbox still apply. A fix is due in a future runtime release; none is published yet.
+- **Tool lists do not reach children (runtimes 0.3.21 to 0.3.38; read from the runtime source, not tested).** A child whose agent definition sets no permission mode, including the built-in `General` agent, gets a fixed toolset (`read`, `glob`, `ls`, `grep`, `write`, `edit`, `bash`, `fetch`, `web_search`, `git_info`) whatever the session's `allowed_tools` and `denied_tools` say. Its tool calls raise no approval requests, even with `interactive_approvals` on. The filesystem policy and command sandbox still apply. Fixed in runtime 0.3.39: children get only the tools the session allows, and their calls ask when the session asks.
 - **Delegation under policy:** `agent` is allowed at the secure baseline, so no explicit grant is needed. `denied_tools`, or an `allowed_tools` list that leaves it out, removes it. When tool restrictions or approvals matter, remove it.
 - **Approvals:** with `interactive_approvals`, the `agent` call itself waits for an answer. Closing the session releases parked requests as denials.
 
@@ -296,8 +296,8 @@ Compatibility is enforced at connect time on three axes:
 The SDK pins the exact runtime it was built and verified against in `compatibility.toml`:
 
 ```toml
-runtime_commit = "219f08000c93d29b6ea423caec5f595ea49ea937"
-runtime_version = "0.3.21"
+runtime_commit = "ea92fb224ae10562e2b30e08c20ac0ac302d02e8"
+runtime_version = "0.3.43"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
