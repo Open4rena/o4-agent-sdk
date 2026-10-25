@@ -1,6 +1,6 @@
 # Hosted-session observation, work dashboards, and human approvals
 
-Applies to o4 Agent SDK v0.4.1. These high-level APIs require capabilities advertised by the **connected runtime**. They are not proof that a daemon is installed/enabled, that a particular daemon endpoint exists, or that a second `LocalRuntime` can see the first process's live sessions.
+Applies to o4 Agent SDK v0.4.2. These high-level APIs require capabilities advertised by the **connected runtime**. They are not proof that a daemon is installed/enabled, that a particular daemon endpoint exists, or that a second `LocalRuntime` can see the first process's live sessions.
 
 ## Negotiate support first
 
@@ -177,4 +177,4 @@ The [human_approval example](https://github.com/Open4rena/o4-agent-sdk/blob/main
 
 ## Wire-only operations are not SDK recipes
 
-The re-exported `protocol` types include `QuestionAsked`/`QuestionAnswer`, `RunDrain`/`RunDrained`, and ownership-reporting types/commands. SDK v0.4.1 has no high-level question-response, handoff/drain, or ownership-transfer methods. Observing an event or reading ownership metadata does not implement those workflows. Do not inject commands behind `Client`, add a second raw reader, or claim a handoff feature based only on the presence of a wire enum. A supported adapter/protocol extension needs its own design and verification.
+The re-exported `protocol` types include `QuestionAsked`/`QuestionAnswer`, `RunDrain`/`RunDrained`, and ownership-reporting types/commands. SDK v0.4.2 has no high-level question-response, handoff/drain, or ownership-transfer methods. Observing an event or reading ownership metadata does not implement those workflows. Do not inject commands behind `Client`, add a second raw reader, or claim a handoff feature based only on the presence of a wire enum. A supported adapter/protocol extension needs its own design and verification.

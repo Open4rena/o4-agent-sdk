@@ -1,6 +1,6 @@
 # Sessions, runs, structured jobs, and live control
 
-Applies to o4 Agent SDK v0.4.1. Examples use `o4_agent_sdk` and Tokio; the schema example additionally needs `serde_json = "1"`. Connection/setup and error diagnostics are in [Runtime and deployment](transports-and-deployment.md).
+Applies to o4 Agent SDK v0.4.2. Examples use `o4_agent_sdk` and Tokio; the schema example additionally needs `serde_json = "1"`. Connection/setup and error diagnostics are in [Runtime and deployment](transports-and-deployment.md).
 
 ## Choose a lifecycle
 
@@ -155,7 +155,7 @@ The snapshot JSON belongs to the runtime, not the SDK's typed API; read it defen
 
 The following minimal controller accepts user instructions from an application channel and reports control-command errors separately from the run's terminal result. It prints only event types, not potentially sensitive payloads. The caller must inspect both outputs: a completed run does not imply a requested steer/cancel succeeded.
 
-**SDK v0.4.1 limitation:** while this controller awaits a steer/cancel acknowledgement, it cannot also call `next_event()` on the same handle. Progress continues buffering in the background. A delayed reply plus more than 256 queued events can overflow and fail the connection. This is not a fully nonblocking, high-volume control recipe. Verify acknowledgement latency/event volume with the intended runtime; an independently usable control handle would require an SDK change. Do not bypass `Client` or add a raw reader as a workaround. Outside control waits, keep rendering fast or use a bounded UI queue.
+**SDK v0.4.2 limitation:** while this controller awaits a steer/cancel acknowledgement, it cannot also call `next_event()` on the same handle. Progress continues buffering in the background. A delayed reply plus more than 256 queued events can overflow and fail the connection. This is not a fully nonblocking, high-volume control recipe. Verify acknowledgement latency/event volume with the intended runtime; an independently usable control handle would require an SDK change. Do not bypass `Client` or add a raw reader as a workaround. Outside control waits, keep rendering fast or use a bounded UI queue.
 
 ```rust,no_run
 use o4_agent_sdk::{Error, Event, RunHandle, RunResult};
