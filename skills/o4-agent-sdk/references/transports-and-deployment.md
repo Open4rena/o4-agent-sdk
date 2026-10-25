@@ -1,6 +1,6 @@
 # Runtime setup, deployment, custom transports, and troubleshooting
 
-Applies to o4 Agent SDK v0.4.1. This is a Rust async library controlling a separate process, not a provider client or a bundled runtime.
+Applies to o4 Agent SDK v0.4.2. This is a Rust async library controlling a separate process, not a provider client or a bundled runtime.
 
 ## Install the two artifacts
 
@@ -8,7 +8,7 @@ Use Rust 1.88+ and a published SDK tag. For a new application:
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.4.1" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.4.2" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 ```
 
@@ -137,7 +137,7 @@ All fallible SDK calls use `o4_agent_sdk::Result<T>`; `Error` is non-exhaustive,
 | `MissingCapabilities`, `MissingCapability` | Advertised features required at connect or by a gated method |
 | `HandshakeTimeout` | Child startup and valid runtime-ready response; no browser/TTY prompt on this connection |
 | `Runtime { code, message, retryable }` | Runtime rejection and its sanitized code; `retryable` is not permission to rerun side effects automatically |
-| `ClientShutdown`, `SessionClosed`, `RunFinished` | Handle lifetimes or completion/control races. In SDK v0.4.1, `cancel()` and `steer()` also return `RunFinished` when the connection has failed; call `next_event()` or `final_result()` to get the real error. The default branch, not yet tagged, returns the connection error from them instead |
+| `ClientShutdown`, `SessionClosed`, `RunFinished` | Handle lifetimes or completion/control races. Since SDK v0.4.2, `cancel()` and `steer()` return the connection error when the connection has failed; in v0.4.1 they returned `RunFinished`, and `next_event()` or `final_result()` gave the real error |
 | `EventBufferOverflow` | Active-run consumer is too slow; drain it promptly and handle the failed shared connection |
 
 For an apparent hang, first check whether the app is draining events/approvals, waiting on a selected but idle observer, or holding handles alive. Do not retry indefinitely, kill unrelated processes, or disable enforcement to make progress. On ambiguous connection failure a command may have run already; decide whether retry/resume is safe before submitting it again.

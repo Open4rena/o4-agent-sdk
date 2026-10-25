@@ -46,7 +46,7 @@ Add the SDK as a dependency, referenced by git tag.
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.4.1" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.4.2" }
 tokio = { version = "1", features = ["full"] }
 ```
 

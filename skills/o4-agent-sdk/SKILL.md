@@ -17,7 +17,7 @@ Use the supplied task and conversation context. If no task was supplied, ask wha
 
 ## Start with the user's application
 
-1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.4.1**. Do not upgrade or change the runtime pin without approval.
+1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.4.2**. Do not upgrade or change the runtime pin without approval.
 2. Establish the task: a single job, a continuing conversation, a user-facing stream, external tools, a monitoring UI, or a custom connection. Ask only for missing decisions that affect implementation.
 3. Establish the runtime executable's real path, model/provider setup, workspace, and state directory. `LocalRuntime` does **not** search `PATH` for a bare executable name.
 4. Agree on file/process/network permissions and whether a human must approve actions. Do not silently widen policy, disable the sandbox, enable unattended approval, or add unrequested providers/MCP servers.

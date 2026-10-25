@@ -1,6 +1,6 @@
 # Permissions, external tools, and delegated agents
 
-Applies to o4 Agent SDK v0.4.1. The SDK declares a policy; the **runtime** enforces it. Ask the user which workspace, commands, network destinations, and external services the application should be allowed to use. Do not choose broader access to make a failing example pass.
+Applies to o4 Agent SDK v0.4.2. The SDK declares a policy; the **runtime** enforces it. Ask the user which workspace, commands, network destinations, and external services the application should be allowed to use. Do not choose broader access to make a failing example pass.
 
 ## Execution policy
 
