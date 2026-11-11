@@ -14,13 +14,13 @@
 //! confirm the same change landed in o4.
 
 /// The o4 commit whose `crates/o4-agent-protocol/src/lib.rs` this crate matches.
-const SYNCED_FROM_O4_COMMIT: &str = "09efd61431193983a8da4cde5dbc9f0d1a2b6987";
+const SYNCED_FROM_O4_COMMIT: &str = "a9c4d91826d55fedb12fef270d8bd37b0847a3cb";
 
 /// FNV-1a 64 of that file. FNV rather than a cryptographic digest because this
 /// detects accidental divergence between two trusted checkouts; it is not a
 /// defence against a forged protocol file, and adding a hashing dependency to
 /// a crate that has two would buy nothing here.
-const SYNCED_DIGEST: u64 = 0x6c38_1295_8367_ad1c;
+const SYNCED_DIGEST: u64 = 0x79d0_804a_c7e2_9963;
 
 const PROTOCOL_SOURCE: &str = include_str!("../src/lib.rs");
 

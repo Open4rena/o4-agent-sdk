@@ -1,6 +1,6 @@
 # Permissions, external tools, and delegated agents
 
-Applies to o4 Agent SDK v0.4.2. The SDK declares a policy; the **runtime** enforces it. Ask the user which workspace, commands, network destinations, and external services the application should be allowed to use. Do not choose broader access to make a failing example pass.
+Applies to o4 Agent SDK v0.5.0. The SDK declares a policy; the **runtime** enforces it. Ask the user which workspace, commands, network destinations, and external services the application should be allowed to use. Do not choose broader access to make a failing example pass.
 
 ## Execution policy
 
@@ -11,7 +11,7 @@ Attach `ExecutionPolicy` when creating the session with `SessionOptions::executi
 | `allowed_tools` | Empty: the sandbox mode's baseline tools. Non-empty: **only** the listed tools, which replaces the baseline (see below) |
 | `denied_tools` | Tools to remove, including otherwise baseline tools; a tool both allowed and denied is an error |
 | `sandbox_mode` | `ReadOnly` (default), `WorkspaceWrite`, or `Disabled` |
-| `sandbox_config` | Optional runtime-specific JSON configuration; use a documented, verified schema for that runtime, not guessed keys |
+| `sandbox_config` | Extra folders for the file tools: `{"readable_roots": [...], "writable_roots": [...]}`, existing paths, absolute or relative to the working folder. Works with `Disabled` and honours `readable_roots` under `WorkspaceWrite` from runtime 0.4.11 |
 | `allowed_domains` | Explicit network grants interpreted by runtime policy; empty is not unrestricted access |
 | `interactive_approvals` | Opt in to permission requests; default false, requires runtime support and an active approval handler |
 
@@ -72,6 +72,8 @@ fn stdio_server(
         args,
         env: BTreeMap::new(),
         cwd,
+        // Most seconds one tool call may take; `None` is the runtime's 30.
+        tool_timeout_sec: None,
     }
 }
 ```
@@ -89,6 +91,7 @@ fn sse_server(url: String, nonsecret_headers: BTreeMap<String, String>) -> McpSe
         name: "remote-tools".into(),
         url,
         headers: nonsecret_headers,
+        tool_timeout_sec: None,
     }
 }
 ```
@@ -110,11 +113,14 @@ fn http_server(url: String) -> McpServerConfig {
         env_http_headers: BTreeMap::from([
             ("X-Workspace".into(), "MCP_WORKSPACE_ID".into()),
         ]),
+        tool_timeout_sec: None,
     }
 }
 ```
 
 `bearer_token_env_var` names the variable the **runtime** reads for the bearer token. `env_http_headers` maps **header name to environment-variable name**, not the other way round. Put actual values in the child runtime's launch environment before connection; do not send token values as variable names or embed them in prompts. Nonsecret static headers can use `headers`. Confirm the destination and use authenticated, encrypted network connections where appropriate to the deployment.
+
+Every variant takes `tool_timeout_sec`: the most seconds one tool call to that server may take. `None` keeps the runtime's default of 30; `Some(0)` is refused. Runtimes before 0.4.11 ignore the field.
 
 `McpServerConfig`'s custom `Debug` redacts sensitive fields, but serialization contains configuration needed by the runtime. Do not log raw serialized configurations, full tool arguments/results, or secret-bearing URLs. Use per-server identifiers and sanitized status for routine diagnostics.
 

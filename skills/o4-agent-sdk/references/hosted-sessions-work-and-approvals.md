@@ -1,6 +1,6 @@
 # Hosted-session observation, work dashboards, and human approvals
 
-Applies to o4 Agent SDK v0.4.2. These high-level APIs require capabilities advertised by the **connected runtime**. They are not proof that a daemon is installed/enabled, that a particular daemon endpoint exists, or that a second `LocalRuntime` can see the first process's live sessions.
+Applies to o4 Agent SDK v0.5.0. These high-level APIs require capabilities advertised by the **connected runtime**. They are not proof that a daemon is installed/enabled, that a particular daemon endpoint exists, or that a second `LocalRuntime` can see the first process's live sessions.
 
 ## Negotiate support first
 
@@ -171,10 +171,12 @@ Decisions are `Approve`, `Deny`, and `AlwaysAllow`. Offer the latter **only** wh
 
 **Cancelling a run does not clear its request (runtimes 0.3.21 to 0.3.38; fixed in 0.3.39).** Verified: after cancelling a run parked on an approval, the runtime still holds the request. A late answer returns `Recorded` and the work registry keeps counting the row as needing input; closing the session clears it. A late answer is not harmless. A late `AlwaysAllow` still approves that tool for the rest of the session, and an approval arriving within the runtime's brief cancel grace period (about half a second) can still let the call start. After cancelling such a run, answer its request with `Deny` (never `AlwaysAllow`) or simply close the session, and do not treat `Recorded` as proof that an action did or did not run. On 0.3.39 and later, cancelling withdraws the request: a late answer gets `AlreadyResolved` and grants nothing, and the needs-input mark clears.
 
+**Approvals break the connection on SDK v0.4.2 and earlier with runtimes from 0.3.95.** Those runtimes announce when a request is settled, and the older SDK ended the connection with `runtime emitted an event for unknown request_id`. SDK v0.5.0 accepts the notice. Use v0.5.0 with any runtime from 0.3.95.
+
 **Approvals occasionally break the connection (runtimes 0.3.21 to 0.3.38; fixed in 0.3.39).** When the runtime raises an approval request, it can send that event and a run event slightly out of order. How often varies with the runtime version and timing: in testing it struck about 1 in 50 to 1 in 90 approval runs on 0.3.21, and between 1 in 40 and 1 in 4 on 0.3.34. The SDK checks that events arrive in order, so it stops with `Error::ProtocolViolation` ("event sequence ... is not greater than previous sequence ...") and closes the connection, which stops a runtime it launched. This is a runtime bug; 0.3.39 and later send events in order. On an older runtime, treat that error as a failed connection: start a new runtime and resume the session if needed; the request on the old connection can no longer be answered. Do not loosen the order check to hide it.
 
 The [human_approval example](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/human_approval.rs) is a complete terminal approver: one loop reads run events and requests together, asks about one request at a time, and refuses everything once its input ends.
 
 ## Wire-only operations are not SDK recipes
 
-The re-exported `protocol` types include `QuestionAsked`/`QuestionAnswer`, `RunDrain`/`RunDrained`, and ownership-reporting types/commands. SDK v0.4.2 has no high-level question-response, handoff/drain, or ownership-transfer methods. Observing an event or reading ownership metadata does not implement those workflows. Do not inject commands behind `Client`, add a second raw reader, or claim a handoff feature based only on the presence of a wire enum. A supported adapter/protocol extension needs its own design and verification.
+The re-exported `protocol` types include `QuestionAsked`/`QuestionAnswer`, `RunDrain`/`RunDrained`, and ownership-reporting types/commands. SDK v0.5.0 has no high-level question-response, handoff/drain, or ownership-transfer methods. Observing an event or reading ownership metadata does not implement those workflows. Do not inject commands behind `Client`, add a second raw reader, or claim a handoff feature based only on the presence of a wire enum. A supported adapter/protocol extension needs its own design and verification.

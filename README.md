@@ -19,9 +19,11 @@ The SDK versions independently of o4; see [VERSIONING.md](VERSIONING.md) for the
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.4.2" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.5.0" }
 tokio = { version = "1", features = ["full"] }
 ```
+
+Upgrading from v0.4.x: `McpServerConfig` and the other protocol types have new fields, so code that builds them field by field needs them added. `tool_timeout_sec: None` keeps a server's tool calls at the runtime's 30-second limit; `ExecutionPolicy` values can end with `..ExecutionPolicy::default()`. v0.5.0 is also the first version that works with approvals on runtimes from 0.3.95.
 
 Prerequisites:
 
@@ -164,7 +166,7 @@ The skill is guidance for the coding agent working on **your application**. It d
 
 ### Install in o4
 
-CI checks this installation with o4 0.3.43. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
+CI checks this installation with o4 0.4.11. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
 
 ```sh
 mkdir -p "$HOME/.o4/plugins"
@@ -180,7 +182,7 @@ This installs the bundle globally. Add `--project` to the install command for a 
 /o4-agent-sdk Connect my MCP server and ask before side-effecting tools run
 ```
 
-The skill package is distributed from this repository's default branch. The Rust library dependency is pinned to `v0.4.2`, which also contains the skill package. No provider keys or model calls are needed just to install or discover the skill. Installation does not automatically upgrade the SDK dependency in your application.
+The skill package is distributed from this repository's default branch. The Rust library dependency is pinned to `v0.5.0`, which also contains the skill package. No provider keys or model calls are needed just to install or discover the skill. Installation does not automatically upgrade the SDK dependency in your application.
 
 ### Install the standalone skill
 
@@ -198,7 +200,7 @@ Keep one installed copy to avoid duplicate names; do not overwrite a customized 
 - [Runtime, deployment, and transports](skills/o4-agent-sdk/references/transports-and-deployment.md) -- installation, compatibility, providers, CI/containers, custom connections, lifecycle, errors, and verification.
 - [Hosted sessions, work, and approvals](skills/o4-agent-sdk/references/hosted-sessions-work-and-approvals.md) -- capability-gated observation, work snapshots/actions/watchers, and responding to human approval requests.
 
-The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.4.2; verify the connected runtime's advertised capabilities before depending on optional features.
+The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.5.0; verify the connected runtime's advertised capabilities before depending on optional features.
 
 CI keeps the skill accurate: it compiles every Rust snippet in the guides, checks that their links still work after installation, fails when a public SDK name is missing from the guides, installs the package with a published o4, and runs the [examples](#examples) the skill points to against a published runtime.
 

@@ -50,6 +50,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         args: vec![server.display().to_string()],
         env: BTreeMap::new(),
         cwd: None,
+        tool_timeout_sec: None,
     };
     let policy = ExecutionPolicy {
         // The server's tool, plus the read-only file tools; nothing else.
