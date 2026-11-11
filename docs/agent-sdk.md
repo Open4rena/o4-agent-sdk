@@ -53,7 +53,7 @@ tokio = { version = "1", features = ["full"] }
 You also need the `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum, for `linux-x86_64`, `linux-arm64` and `macos-arm64`. The Linux builds are static and run on any distribution. Pick a version inside the SDK's accepted range (see [Compatibility](#compatibility)):
 
 ```bash
-VERSION=0.4.11
+VERSION=0.4.14
 PLATFORM=linux-x86_64
 BASE=https://github.com/Open4rena/o4-releases/releases/download/v${VERSION}
 curl -fsSLO "${BASE}/o4-agent-runtime-${PLATFORM}.tar.gz"
@@ -188,7 +188,7 @@ Events arrive as typed `Event` variants inside an `EventEnvelope` (which also ca
 
 `RunOptions` controls a run: `output_schema` (structured JSON output), `max_turns`, `token_budget`, and `timeout_secs`. `RunResult` reports the final `status` (`RunStatus`), `messages`, `usage`, `turns`, and `tool_calls`.
 
-When `timeout_secs` passes (runtimes from 0.4.11), a command or other tool still running is stopped, the model gets one turn to say what it did and what is left, and the run ends `TimedOut`. Tool calls the model makes in that last turn are not run. `max_turns` and `token_budget` end a run `ResourceLimited` the same way. Earlier runtimes let the running command finish first and could end the run `Failed`.
+When `timeout_secs` passes (runtimes from 0.4.11), a command or other tool still running is stopped, the model gets one turn to say what it did and what is left, and the run ends `TimedOut`. Tool calls the model makes in that last turn are not run. From runtime 0.4.14, commands that run put in the background stop at the limit too; on 0.4.11 to 0.4.13 they keep running until `task_stop` or the session closes, so use 0.4.14 or later if a command must not outlive its run. A command an earlier run left in the background is never stopped by a later run's limit. `max_turns` and `token_budget` end a run `ResourceLimited` the same way. Earlier runtimes let the running command finish first and could end the run `Failed`.
 
 ### Execution policy
 
@@ -302,8 +302,8 @@ Compatibility is enforced at connect time on three axes:
 The SDK pins the exact runtime it was built and verified against in `compatibility.toml`:
 
 ```toml
-runtime_commit = "1a932757123606e4912247252c3417ef4609ec18"
-runtime_version = "0.4.11"
+runtime_commit = "8a8768a7c28f2e81926248a5c9ac12c4b073f90b"
+runtime_version = "0.4.14"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
