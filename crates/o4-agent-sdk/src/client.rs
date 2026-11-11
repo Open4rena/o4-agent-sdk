@@ -412,6 +412,8 @@ impl Client {
             .request_terminal(
                 Command::SessionAttach {
                     session_id: session_id.clone(),
+                    since_sequence: None,
+                    daemon_epoch: None,
                 },
                 PendingKind::SessionAttach,
             )
@@ -565,6 +567,8 @@ impl Client {
             execution_policy: options.execution_policy,
             mcp_servers: options.mcp_servers,
             context: options.context,
+            permission_mode: None,
+            instructions: None,
         };
         let envelope = self
             .request_terminal(command, PendingKind::SessionCreate)
@@ -691,6 +695,7 @@ impl Client {
             max_turns: options.max_turns,
             token_budget: options.token_budget,
             timeout_secs: options.timeout_secs,
+            attachments: Vec::new(),
         };
         let receiver = self
             .inner
@@ -1443,6 +1448,15 @@ impl Inner {
                 return Ok(());
             }
             if self.route_to_attachment(&envelope) {
+                return Ok(());
+            }
+            // Runtimes from 0.3.95 announce that an approval or question was
+            // settled (answered, or withdrawn when its run stopped) to every
+            // client, in the same way they raise the request itself. Nothing
+            // here waits on it: an application answers through the request
+            // it was given.
+            if envelope.request_id.is_empty() && matches!(envelope.event, Event::RequestResolved(_))
+            {
                 return Ok(());
             }
             return Err(Error::ProtocolViolation {

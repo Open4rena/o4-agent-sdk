@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use o4_agent_sdk::protocol::{
     AgentStarted, ApprovalDecision, ApprovalRequested, Command, CommandAck, Context, ErrorEvent,
     Event, EventEnvelope, ExecutionPolicy, McpServerConfig, MessageEvent, OwnerWire,
-    RequestEnvelope, RunCompleted, RunStarted, RunStatus, RuntimeReady, SandboxMode, SessionEvent,
-    SessionListed, SessionSummary, SteeringInjected, Usage, WarningEvent, WorkActionKind,
-    WorkActioned, WorkChanged, WorkListed,
+    RequestEnvelope, RequestOutcome, RequestResolved, RunCompleted, RunStarted, RunStatus,
+    RuntimeReady, SandboxMode, SessionEvent, SessionListed, SessionSummary, SteeringInjected,
+    Usage, WarningEvent, WorkActionKind, WorkActioned, WorkChanged, WorkListed,
 };
 use o4_agent_sdk::{
     ApprovalOutcome, Client, ClientOptions, Error, LocalRuntime, Reasoning, ResumeOptions,
@@ -1124,11 +1124,13 @@ async fn policy_and_mcp_use_exact_wire_fields_and_debug_redacts_values() {
         args: vec!["--token=argument-secret".into()],
         env: BTreeMap::from([("API_TOKEN".into(), "environment-secret".into())]),
         cwd: None,
+        tool_timeout_sec: None,
     };
     let sse = McpServerConfig::Sse {
         name: "remote-tools".into(),
         url: "https://credential@example.invalid/sse".into(),
         headers: BTreeMap::from([("Authorization".into(), "Bearer header-secret".into())]),
+        tool_timeout_sec: None,
     };
     for debug in [format!("{stdio:?}"), format!("{sse:?}")] {
         assert!(!debug.contains("argument-secret"));
@@ -1143,6 +1145,7 @@ async fn policy_and_mcp_use_exact_wire_fields_and_debug_redacts_values() {
         sandbox_config: Some(json!({"writable_roots": ["workspace"]})),
         allowed_domains: vec!["docs.example.com".into()],
         interactive_approvals: false,
+        ..ExecutionPolicy::default()
     };
     let session = client
         .create_session(
@@ -1354,6 +1357,9 @@ async fn listing_reports_hosted_sessions_with_their_directories() {
                     attached_clients: 0,
                     owner: OwnerWire::Local,
                     owner_generation: 0,
+                    reasoning: None,
+                    permission_mode: None,
+                    messages_len: None,
                 }],
             }),
         );
@@ -1395,7 +1401,7 @@ async fn attached_sessions_receive_fanout_that_answers_no_request_of_ours() {
         let request = peer.request().await;
         assert!(matches!(
             request.command,
-            Command::SessionAttach { ref session_id } if session_id == "hosted-1"
+            Command::SessionAttach { ref session_id, .. } if session_id == "hosted-1"
         ));
         peer.send(
             &request.request_id,
@@ -1662,6 +1668,12 @@ fn approval(request_id: &str) -> ApprovalRequested {
         summary: "write /tmp/x".into(),
         risk: None,
         always_allow_available: true,
+        rule_pattern: None,
+        tool_description: None,
+        args: None,
+        change_preview: Vec::new(),
+        install_scripts: Vec::new(),
+        plugin_capability: None,
     }
 }
 
@@ -1711,6 +1723,59 @@ async fn an_approval_is_delivered_and_answering_lets_the_run_continue() {
         request.respond(ApprovalDecision::Approve).await.unwrap(),
         ApprovalOutcome::Recorded
     );
+    runtime.await.unwrap();
+}
+
+/// Runtimes from 0.3.95 announce when an approval is settled, with an empty
+/// request id, as they announce the approval itself. The client takes the
+/// notice and carries on; before, it ended the connection with "runtime
+/// emitted an event for unknown request_id", failing every approval run.
+#[tokio::test]
+async fn a_settled_notice_does_not_end_the_connection() {
+    let (transport, mut peer, _) = memory_pair("");
+    let runtime = tokio::spawn(async move {
+        handshake_with_daemon(&mut peer).await;
+        peer.send(
+            "",
+            Some("s-1"),
+            None,
+            Event::ApprovalRequested(approval("ap-9")),
+        );
+        let answer = peer.request().await;
+        peer.send(
+            &answer.request_id,
+            None,
+            None,
+            Event::CommandAck(CommandAck {
+                command: Some("approval_respond".into()),
+            }),
+        );
+        peer.send(
+            "",
+            Some("s-1"),
+            None,
+            Event::RequestResolved(RequestResolved::settled("ap-9", RequestOutcome::Answered)),
+        );
+        // The connection must still answer requests after the notice.
+        let listed = peer.request().await;
+        assert!(matches!(listed.command, Command::SessionList));
+        peer.send(
+            &listed.request_id,
+            None,
+            None,
+            Event::SessionListed(SessionListed::default()),
+        );
+        peer
+    });
+
+    let client = Client::connect(transport).await.unwrap();
+    let mut approvals = client.approvals().await.unwrap();
+    let request = approvals.next_request().await.expect("an approval");
+    assert_eq!(
+        request.respond(ApprovalDecision::Approve).await.unwrap(),
+        ApprovalOutcome::Recorded
+    );
+    assert!(client.list_sessions().await.unwrap().is_empty());
     runtime.await.unwrap();
 }
 

@@ -188,6 +188,8 @@ Events arrive as typed `Event` variants inside an `EventEnvelope` (which also ca
 
 `RunOptions` controls a run: `output_schema` (structured JSON output), `max_turns`, `token_budget`, and `timeout_secs`. `RunResult` reports the final `status` (`RunStatus`), `messages`, `usage`, `turns`, and `tool_calls`.
 
+When `timeout_secs` passes (runtimes from 0.4.11), a command or other tool still running is stopped, the model gets one turn to say what it did and what is left, and the run ends `TimedOut`. Tool calls the model makes in that last turn are not run. `max_turns` and `token_budget` end a run `ResourceLimited` the same way. Earlier runtimes let the running command finish first and could end the run `Failed`.
+
 ### Execution policy
 
 Every session can carry an `ExecutionPolicy` that the runtime enforces **fail-closed**:
@@ -207,7 +209,7 @@ let policy = ExecutionPolicy {
 - `allowed_tools` -- empty: the sandbox mode's baseline tools. Non-empty: **only** the listed tools, replacing the baseline. Verified on runtime 0.3.21: a `WorkspaceWrite` session allowing only `read` cannot write files.
 - `denied_tools` -- tools to remove. Naming a tool in both lists is an error.
 - `sandbox_mode` -- `Disabled`, `ReadOnly` (default), or `WorkspaceWrite`.
-- `sandbox_config` -- optional sandbox-specific configuration.
+- `sandbox_config` -- extra folders the session's file tools may reach, besides its working folder: `{"readable_roots": [...], "writable_roots": [...]}`. Paths are absolute, or relative to the working folder, and must exist. A writable folder is also readable; `writable_roots` is refused under `ReadOnly`. Runtimes from 0.4.11 accept it with `sandbox_mode: Disabled` too, where it is the only way to reach files outside the working folder and the user's home, and honour `readable_roots` under `WorkspaceWrite`.
 - `allowed_domains` -- network egress allowlist for fetch/search tools. Empty grants no network access.
 - `interactive_approvals` -- make side-effecting tool calls wait for an answer from the application (see `Client::approvals`). Off by default.
 
@@ -239,6 +241,8 @@ let server = McpServerConfig::Stdio {
     args: vec![],
     env: Default::default(),
     cwd: None,
+    // Most seconds one tool call may take; `None` is the runtime's 30.
+    tool_timeout_sec: Some(300),
 };
 let options = SessionOptions::new("claude-sonnet-4-6", "/path/to/project")
     .execution_policy(ExecutionPolicy {
@@ -251,7 +255,9 @@ let options = SessionOptions::new("claude-sonnet-4-6", "/path/to/project")
 
 The runtime names each MCP tool `<server name>__<tool name>`. Unless `sandbox_mode` is `Disabled`, the session keeps an MCP tool only when `allowed_tools` names it, and session creation fails when no MCP tool from any configured server is named. With several servers, one whose tools are all unnamed still starts, and its tools are dropped. A stdio server is started as an ordinary process outside the session's sandbox, before any model turn, so only configure servers you trust.
 
-`McpServerConfig::Sse { name, url, headers }` connects to remote SSE servers, and `McpServerConfig::StreamableHttp` to Streamable HTTP servers. If any configured server fails to start, session creation fails and every successfully started server is shut down.
+Every transport takes `tool_timeout_sec`: the most seconds one tool call to that server may take. Unset, a call is stopped after 30 seconds. Runtimes before 0.4.11 ignore it. Tool calls to MCP servers that the model makes in one turn run at the same time (runtimes from 0.4.11); a stdio server must answer each request by its id, as the protocol requires.
+
+`McpServerConfig::Sse { name, url, headers, .. }` connects to remote SSE servers, and `McpServerConfig::StreamableHttp` to Streamable HTTP servers. If any configured server fails to start, session creation fails and every successfully started server is shut down.
 
 ### Transport abstraction
 
@@ -279,7 +285,7 @@ Commands and events are framed as one JSON object per line, versioned as protoco
 **Events** (`Event`, tagged by `type`):
 
 - Sessions: `runtime_ready`, `session_created`, `session_resumed`, `session_closed`.
-- Run progress: `run_started`, `agent_started`, `turn_started`, `message_started`, `message_updated`, `message_completed`, `tool_started`, `tool_updated`, `tool_completed`, `run_completed`. Message and tool events carry whole snapshots, not text deltas.
+- Run progress: `run_started`, `agent_started`, `turn_started`, `message_started`, `message_updated`, `message_completed`, `tool_started`, `tool_updated`, `tool_completed`, `run_completed`. Message and tool events carry whole snapshots, not text deltas. `tool_completed` carries the tool's result details in `tool_call.result`, whether it failed in `tool_call.is_error`, and (runtimes from 0.4.11) the text the model was shown in `tool_call.output`.
 - Diagnostics: `warning`, `router_diagnostic`, `retry`, `context_compacted`, `resource_limit`, `steering_injected`.
 - Replies: `command_ack`, `error`.
 - Hosted sessions, work and approvals: `session_listed`, `session_attached`, `session_detached`, `work_listed`, `work_actioned`, `work_changed`, `approval_requested`; wire-only `question_asked`, `run_drained`, `session_ownership_reported`.
