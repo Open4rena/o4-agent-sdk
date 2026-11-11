@@ -46,14 +46,14 @@ Add the SDK as a dependency, referenced by git tag.
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.4.2" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.5.0" }
 tokio = { version = "1", features = ["full"] }
 ```
 
 You also need the `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum, for `linux-x86_64`, `linux-arm64` and `macos-arm64`. The Linux builds are static and run on any distribution. Pick a version inside the SDK's accepted range (see [Compatibility](#compatibility)):
 
 ```bash
-VERSION=0.3.43
+VERSION=0.4.11
 PLATFORM=linux-x86_64
 BASE=https://github.com/Open4rena/o4-releases/releases/download/v${VERSION}
 curl -fsSLO "${BASE}/o4-agent-runtime-${PLATFORM}.tar.gz"
@@ -302,8 +302,8 @@ Compatibility is enforced at connect time on three axes:
 The SDK pins the exact runtime it was built and verified against in `compatibility.toml`:
 
 ```toml
-runtime_commit = "ea92fb224ae10562e2b30e08c20ac0ac302d02e8"
-runtime_version = "0.3.43"
+runtime_commit = "1a932757123606e4912247252c3417ef4609ec18"
+runtime_version = "0.4.11"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
