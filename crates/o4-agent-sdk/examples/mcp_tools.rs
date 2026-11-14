@@ -54,13 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let policy = ExecutionPolicy {
         // The server's tool, plus the read-only file tools; nothing else.
-        allowed_tools: vec![
-            format!("{SERVER}__echo"),
-            "read".into(),
-            "ls".into(),
-            "glob".into(),
-            "grep".into(),
-        ],
+        allowed_tools: vec![format!("{SERVER}__echo"), "read".into(), "ls".into()],
         ..ExecutionPolicy::default()
     };
 
