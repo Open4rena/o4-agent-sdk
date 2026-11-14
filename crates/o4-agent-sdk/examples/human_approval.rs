@@ -69,9 +69,7 @@ async fn supervise(
                 // Only these tools. Leaving out `agent` (sub-agents) and
                 // `exec` (code mode) matters: in runtimes 0.3.21 to 0.3.38 their
                 // tool calls do not wait for an answer.
-                allowed_tools: ["read", "ls", "glob", "grep", "write", "edit"]
-                    .map(String::from)
-                    .to_vec(),
+                allowed_tools: ["read", "ls", "write", "edit"].map(String::from).to_vec(),
                 // Allows editing files inside the workspace...
                 sandbox_mode: SandboxMode::WorkspaceWrite,
                 // ...and makes every change wait for an answer.

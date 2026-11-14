@@ -199,7 +199,7 @@ use o4_agent_sdk::{ExecutionPolicy, SandboxMode};
 
 let policy = ExecutionPolicy {
     // A non-empty list is the session's whole toolset: only these tools.
-    allowed_tools: vec!["read".into(), "glob".into(), "grep".into(), "ls".into()],
+    allowed_tools: vec!["read".into(), "ls".into()],
     sandbox_mode: SandboxMode::WorkspaceWrite,
     allowed_domains: vec!["api.github.com".into()],
     ..ExecutionPolicy::default()
@@ -207,6 +207,7 @@ let policy = ExecutionPolicy {
 ```
 
 - `allowed_tools` -- empty: the sandbox mode's baseline tools. Non-empty: **only** the listed tools, replacing the baseline. Verified on runtime 0.3.21: a `WorkspaceWrite` session allowing only `read` cannot write files.
+- **No `glob` or `grep` from runtime 0.4.34.** The runtime has no `glob` or `grep` tool; the model searches by running `rg` with `bash`. A list that names either is refused at session creation as naming an unknown tool. To let a session search, allow `bash`: under `WorkspaceWrite` that also needs an enforcing OS sandbox, and `ReadOnly` cannot grant it. Runtimes up to 0.4.33 still have both tools.
 - `denied_tools` -- tools to remove. Naming a tool in both lists is an error.
 - `sandbox_mode` -- `Disabled`, `ReadOnly` (default), or `WorkspaceWrite`.
 - `sandbox_config` -- extra folders the session's file tools may reach, besides its working folder: `{"readable_roots": [...], "writable_roots": [...]}`. Paths are absolute, or relative to the working folder, and must exist. A writable folder is also readable; `writable_roots` is refused under `ReadOnly`. Runtimes from 0.4.11 accept it with `sandbox_mode: Disabled` too, where it is the only way to reach files outside the working folder and the user's home, and honour `readable_roots` under `WorkspaceWrite`.
