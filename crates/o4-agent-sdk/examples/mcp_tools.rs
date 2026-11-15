@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo run -p o4-agent-sdk --example mcp_tools -- \
-//!     <path-to-o4-agent-runtime> <model> [prompt...]
+//!     <model> [prompt...]
 //! ```
 //!
 //! Uses the small MCP server in `examples/mcp/echo_server.py` (needs
@@ -32,9 +32,8 @@ const SERVER: &str = "examples";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let usage = "usage: mcp_tools <path-to-o4-agent-runtime> <model> [prompt...]";
+    let usage = "usage: mcp_tools <model> [prompt...]";
     let mut args = env::args().skip(1);
-    let runtime = args.next().ok_or(usage)?;
     let model = args.next().ok_or(usage)?;
     let prompt = args.collect::<Vec<_>>().join(" ");
     let prompt = if prompt.is_empty() {
@@ -58,11 +57,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ..ExecutionPolicy::default()
     };
 
-    let client = Client::connect_with_options(
-        LocalRuntime::new(runtime),
-        ClientOptions::default().require_capability("mcp"),
-    )
-    .await?;
+    // The runtime built into the SDK, or the one O4_AGENT_RUNTIME_BIN names.
+    let runtime = match env::var_os("O4_AGENT_RUNTIME_BIN") {
+        Some(path) => LocalRuntime::new(path),
+        None => LocalRuntime::bundled()?,
+    };
+    let client =
+        Client::connect_with_options(runtime, ClientOptions::default().require_capability("mcp"))
+            .await?;
     let outcome = async {
         // Starting the session starts the server; it stops with the session.
         let session = client

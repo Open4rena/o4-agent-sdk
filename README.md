@@ -13,13 +13,13 @@ This repository is an MVP workspace:
 - [`o4-agent-protocol`](crates/o4-agent-protocol) contains serde wire types and v1 compatibility constants.
 - [`o4-agent-sdk`](crates/o4-agent-sdk) contains the public async API, local subprocess transport, abstract transport contract, and event router.
 
-The SDK versions independently of o4; see [VERSIONING.md](VERSIONING.md) for the compatibility policy.
+Each SDK release carries the o4 runtime it was tested with, and each o4 release gets an SDK release carrying it; see [VERSIONING.md](VERSIONING.md).
 
 ## Installation
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.5.0" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.6.0" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -28,11 +28,17 @@ Upgrading from v0.4.x: `McpServerConfig` and the other protocol types have new f
 Prerequisites:
 
 - Rust 1.88+
-- A compatible `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it as
-  `o4-agent-runtime-<platform>.tar.gz` (with a `.sha256`) on
-  [GitHub Releases](https://github.com/Open4rena/o4-releases), for `linux-x86_64`,
-  `linux-arm64` and `macos-arm64`. The archive holds only the binary; point
-  `LocalRuntime::new(...)` at it. See [Compatibility](#compatibility).
+- `curl`, used once at build time. The SDK carries the o4 runtime it was
+  tested with: building it downloads `o4-agent-runtime` for your platform from
+  the pinned o4 release, checks its SHA-256, and builds it into your program.
+  `LocalRuntime::bundled()` runs it; there is nothing else to install. Without
+  network access at build time, see [Offline builds](docs/agent-sdk.md#offline-builds).
+- macOS on Apple silicon, or Linux on x86_64 or arm64, the platforms o4
+  publishes a runtime for. Elsewhere, build with `default-features = false`
+  and pass your own runtime to `LocalRuntime::new(path)`.
+
+Upgrading from v0.5.x: nothing breaks. `LocalRuntime::new(path)` works as
+before; switch to `LocalRuntime::bundled()` to drop your own runtime download.
 
 ## Quick start
 
@@ -43,7 +49,7 @@ use o4_agent_sdk::{Client, Event, LocalRuntime, SessionOptions};
 
 #[tokio::main]
 async fn main() -> o4_agent_sdk::Result<()> {
-    let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
+    let client = Client::connect(LocalRuntime::bundled()?).await?;
 
     let options = SessionOptions::new("claude-sonnet-4-6", "/tmp");
     let mut handle = client
@@ -71,7 +77,7 @@ async fn main() -> o4_agent_sdk::Result<()> {
 Complete programs in [`crates/o4-agent-sdk/examples/`](crates/o4-agent-sdk/examples). Run one from a checkout of this repository:
 
 ```sh
-cargo run -p o4-agent-sdk --example live_progress -- /path/to/o4-agent-runtime claude-sonnet-4-6
+cargo run -p o4-agent-sdk --example live_progress -- claude-sonnet-4-6
 ```
 
 | Example | What it shows |
@@ -84,10 +90,10 @@ cargo run -p o4-agent-sdk --example live_progress -- /path/to/o4-agent-runtime c
 | [`mcp_tools`](crates/o4-agent-sdk/examples/mcp_tools.rs) | Tools from an MCP server, including the bundled example server |
 | [`human_approval`](crates/o4-agent-sdk/examples/human_approval.rs) | A person approves each file change before it happens (file tools only) |
 
-Each takes the runtime path and a model name. The model `open4rena-smoke:open4rena-usage-smoke`, built into the runtime, needs no provider account: it gives fixed test replies, never real answers. To run every example that way, as CI does:
+Each takes a model name and runs the runtime built into the SDK; set `O4_AGENT_RUNTIME_BIN=/path/to/o4-agent-runtime` to run another. The model `open4rena-smoke:open4rena-usage-smoke`, built into the runtime, needs no provider account: it gives fixed test replies, never real answers. To run every example that way, as CI does:
 
 ```sh
-scripts/run-examples.sh /path/to/o4-agent-runtime
+scripts/run-examples.sh    # or: scripts/run-examples.sh /path/to/o4-agent-runtime
 ```
 
 ## Usage
@@ -101,7 +107,7 @@ use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::bundled()?).await?;
 
 let result = client
     .run(
@@ -125,7 +131,7 @@ use o4_agent_sdk::{Client, LocalRuntime, SessionOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::bundled()?).await?;
 
 let session = client
     .create_session(SessionOptions::new("claude-sonnet-4-6", "/tmp"))
@@ -148,7 +154,7 @@ use o4_agent_sdk::{Client, LocalRuntime, ResumeOptions};
 
 # #[tokio::main]
 # async fn main() -> o4_agent_sdk::Result<()> {
-let client = Client::connect(LocalRuntime::new("./o4-agent-runtime")).await?;
+let client = Client::connect(LocalRuntime::bundled()?).await?;
 let session = client
     .resume_session("session-id", ResumeOptions::default())
     .await?;
@@ -166,7 +172,7 @@ The skill is guidance for the coding agent working on **your application**. It d
 
 ### Install in o4
 
-CI checks this installation with o4 0.4.14. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
+CI checks this installation with o4 0.4.34. Every published o4 release (0.2.78 and later) includes the plugin format it uses; older ones are untested.
 
 ```sh
 mkdir -p "$HOME/.o4/plugins"
@@ -182,7 +188,7 @@ This installs the bundle globally. Add `--project` to the install command for a 
 /o4-agent-sdk Connect my MCP server and ask before side-effecting tools run
 ```
 
-The skill package is distributed from this repository's default branch. The Rust library dependency is pinned to `v0.5.0`, which also contains the skill package. No provider keys or model calls are needed just to install or discover the skill. Installation does not automatically upgrade the SDK dependency in your application.
+The skill package is distributed from this repository's default branch. The Rust library dependency is pinned to `v0.6.0`, which also contains the skill package. No provider keys or model calls are needed just to install or discover the skill. Installation does not automatically upgrade the SDK dependency in your application.
 
 ### Install the standalone skill
 
@@ -200,7 +206,7 @@ Keep one installed copy to avoid duplicate names; do not overwrite a customized 
 - [Runtime, deployment, and transports](skills/o4-agent-sdk/references/transports-and-deployment.md) -- installation, compatibility, providers, CI/containers, custom connections, lifecycle, errors, and verification.
 - [Hosted sessions, work, and approvals](skills/o4-agent-sdk/references/hosted-sessions-work-and-approvals.md) -- capability-gated observation, work snapshots/actions/watchers, and responding to human approval requests.
 
-The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.5.0; verify the connected runtime's advertised capabilities before depending on optional features.
+The skill's [public API coverage map](skills/o4-agent-sdk/SKILL.md#public-api-coverage-map) shows where each supported area is covered. Examples target SDK v0.6.0; verify the connected runtime's advertised capabilities before depending on optional features.
 
 CI keeps the skill accurate: it compiles every Rust snippet in the guides, checks that their links still work after installation, fails when a public SDK name is missing from the guides, installs the package with a published o4, and runs the [examples](#examples) the skill points to against a published runtime.
 
@@ -216,14 +222,14 @@ The SDK pins the exact runtime it was built and verified against in [`compatibil
 
 ## Testing and development
 
-The integration suite uses an in-memory fake JSONL runtime and needs no provider keys. End-to-end tests exercise the real runtime binary (set `O4_AGENT_RUNTIME_BIN`).
+The integration suite uses an in-memory fake JSONL runtime and needs no provider keys. End-to-end tests exercise the real runtime binary: the one built into the SDK, or the one `O4_AGENT_RUNTIME_BIN` names.
 
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
 cargo test --workspace --doc    # compiles the Rust code in the README, docs and skill
 cargo clippy --workspace --all-targets -- -D warnings
-scripts/run-examples.sh /path/to/o4-agent-runtime    # needs python3
+scripts/run-examples.sh    # needs python3
 ```
 
 [CI](.github/workflows/ci.yml) runs all of these on every push and pull request, using the published runtime named in [`compatibility.toml`](compatibility.toml).

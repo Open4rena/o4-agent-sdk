@@ -126,6 +126,23 @@ impl LocalRuntime {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// The `o4-agent-runtime` built into this SDK release, the o4 release
+    /// named by [`BUNDLED_RUNTIME_VERSION`](crate::BUNDLED_RUNTIME_VERSION).
+    ///
+    /// The first call in a process unpacks it into the user's cache folder
+    /// (`~/Library/Caches/o4-agent-sdk` on macOS, `$XDG_CACHE_HOME` or
+    /// `~/.cache/o4-agent-sdk` on Linux; `O4_AGENT_SDK_CACHE_DIR` overrides
+    /// both) and checks it against the checksum recorded at build time. A copy
+    /// that was replaced or edited is unpacked again rather than run.
+    ///
+    /// Returns [`Error::BundledRuntimeUnavailable`] on a platform o4 publishes
+    /// no runtime for, when the `bundled-runtime` feature is off, or when the
+    /// cache folder cannot be written; use [`LocalRuntime::new`] with a path
+    /// then.
+    pub fn bundled() -> Result<Self> {
+        crate::bundled::path().map(Self::new)
+    }
 }
 
 impl fmt::Debug for LocalRuntime {

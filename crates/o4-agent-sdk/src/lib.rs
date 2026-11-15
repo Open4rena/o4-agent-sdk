@@ -4,6 +4,7 @@
 //! commands, and routes typed events. It does not implement an agent loop.
 //! [`Transport`] is byte-stream agnostic and has no PTY or sshable dependency.
 
+mod bundled;
 mod client;
 mod error;
 mod transport;
@@ -33,6 +34,10 @@ pub use transport::{LocalRuntime, Transport, TransportError, TransportSource};
 /// `compatibility.toml`; `compatibility_pin_matches_compiled_default` fails if
 /// the two drift apart.
 pub const DEFAULT_RUNTIME_VERSION_REQUIREMENT: &str = ">=0.0.57, <1.0.0";
+
+/// The o4 release whose `o4-agent-runtime` is built into this SDK, run by
+/// [`LocalRuntime::bundled`]. Empty when the `bundled-runtime` feature is off.
+pub const BUNDLED_RUNTIME_VERSION: &str = bundled::VERSION;
 
 // The Rust code in the README, docs/ and the coding-agent skill's guides,
 // compiled by `cargo test --doc` so it cannot drift from the API. Not part of

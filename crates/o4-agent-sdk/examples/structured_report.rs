@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! cargo run -p o4-agent-sdk --example structured_report -- \
-//!     <path-to-o4-agent-runtime> <model> [workspace]
+//!     <model> [workspace]
 //! ```
 //!
 //! Prints the report, or exits with an error unless the run completed and
@@ -28,19 +28,23 @@ struct Report {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let usage = "usage: structured_report <path-to-o4-agent-runtime> <model> [workspace]";
+    let usage = "usage: structured_report <model> [workspace]";
     let mut args = env::args().skip(1);
-    let runtime = args.next().ok_or(usage)?;
     let model = args.next().ok_or(usage)?;
     let workspace = match args.next() {
         Some(path) => PathBuf::from(path),
         None => env::current_dir()?,
     };
 
+    // The runtime built into the SDK, or the one O4_AGENT_RUNTIME_BIN names.
+    let runtime = match env::var_os("O4_AGENT_RUNTIME_BIN") {
+        Some(path) => LocalRuntime::new(path),
+        None => LocalRuntime::bundled()?,
+    };
     // Fail at connection, not halfway through the job, if this runtime cannot
     // return schema-checked output.
     let client = Client::connect_with_options(
-        LocalRuntime::new(runtime),
+        runtime,
         ClientOptions::default().require_capability("structured_output"),
     )
     .await?;

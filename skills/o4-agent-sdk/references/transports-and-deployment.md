@@ -1,6 +1,6 @@
 # Runtime setup, deployment, custom transports, and troubleshooting
 
-Applies to o4 Agent SDK v0.5.0. This is a Rust async library controlling a separate process, not a provider client or a bundled runtime.
+Applies to o4 Agent SDK v0.6.0. This is a Rust async library controlling a separate process, not a provider client. Each release carries the runtime it was tested with.
 
 ## Install the two artifacts
 
@@ -8,13 +8,15 @@ Use Rust 1.88+ and a published SDK tag. For a new application:
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.5.0" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.6.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 ```
 
 Add `serde_json = "1"` for JSON schemas/values you construct yourself, `semver = "1"` for a custom version requirement, or `async-trait = "0.1"` for a transport implementation only when needed. Do not assume transitive dependencies can be imported directly by the application.
 
-Get the standalone runtime from [public o4 releases](https://github.com/Open4rena/o4-releases), **not** the private o4 repository. The recorded verified release is `0.3.21`. Choose the `o4-agent-runtime-<platform>.tar.gz` asset and matching `.sha256` for `linux-x86_64`, `linux-arm64`, or `macos-arm64`; do not mistake a CLI archive for the runtime. Verify its checksum before extracting/running it (`sha256sum -c` on Linux or `shasum -a 256 -c` on macOS). The archive holds `o4-agent-runtime`; it needs no `o4` CLI and takes no arguments. Do not invent an `o4 agent-runtime` subcommand or use a terminal/PTY.
+The runtime comes with the SDK. Building the SDK downloads `o4-agent-runtime` for the build's platform from the o4 release pinned in the SDK's `compatibility.toml` (needs `curl` and github.com once), refuses it unless its SHA-256 matches the one recorded there, and builds it into the application. `LocalRuntime::bundled()` unpacks it once into the user's cache folder (or `O4_AGENT_SDK_CACHE_DIR`), checks it again, and runs it; `BUNDLED_RUNTIME_VERSION` is its o4 version. It returns `Error::BundledRuntimeUnavailable` on a platform o4 publishes no runtime for (anything but `linux-x86_64`, `linux-arm64` and `macos-arm64`), when the cache folder cannot be written, or when the application turned the `bundled-runtime` feature off. For an offline build, point `O4_AGENT_SDK_RUNTIME_ARCHIVE` at the pinned `o4-agent-runtime-<platform>.tar.gz`; it must still match the checksum.
+
+To use another runtime instead, such as a different o4 release, get it from [public o4 releases](https://github.com/Open4rena/o4-releases), **not** the private o4 repository: choose the `o4-agent-runtime-<platform>.tar.gz` asset and its `.sha256`, verify it, and pass the extracted binary to `LocalRuntime::new(path)`. Build the SDK with `default-features = false` to leave the carried runtime out.
 
 `LocalRuntime::new(path)` requires an existing executable file path. It canonicalizes the path and does **not** search `PATH`; prefer an absolute path or an explicit relative path such as `./o4-agent-runtime`. `O4_AGENT_RUNTIME_BIN` is a test/application convention: the SDK does not automatically read it for you.
 

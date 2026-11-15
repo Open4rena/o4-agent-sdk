@@ -4,9 +4,10 @@
 
 The o4 Agent SDK is a standalone async Rust library for controlling the real
 `o4-agent-runtime` process over a versioned, line-delimited JSON (JSONL)
-protocol. It is a **control plane**: it does not implement an agent loop, call
-model providers, or bundle the runtime. Applications link the SDK; the SDK
-spawns and drives the runtime binary.
+protocol. It is a **control plane**: it does not implement an agent loop or
+call model providers. Applications link the SDK; the SDK spawns and drives the
+runtime binary. Each SDK release carries one runtime, the o4 release pinned in
+`compatibility.toml`, built into the library (`LocalRuntime::bundled()`).
 
 This repository is **public**. Commit messages, code comments and docs are
 read by outside users; see "Public repository" below.
@@ -61,18 +62,28 @@ reviewed act, not a side effect of other work.
 
 ## Versioning and compatibility
 
-The SDK versions **independently** of o4. Read and follow
+Each SDK release carries the runtime of one o4 release, and every new o4
+release produces an SDK release (a patch version) carrying it. Read and follow
 [VERSIONING.md](VERSIONING.md) before touching versions.
 
-- Compatibility with a runtime is declared in `compatibility.toml`
-  (`runtime_version`, `runtime_commit`, `protocol_version`,
-  `runtime_version_requirement`) and enforced at handshake.
+- The carried runtime is pinned in `compatibility.toml`: `runtime_version`,
+  `runtime_commit`, and the `[runtime_archive_sha256]` table the build checks
+  each download against. `scripts/repin-runtime.sh <version> <commit>`
+  rewrites them, `.github/runtime-checksums.txt`, and the docs that name the
+  version; `.github/workflows/runtime-release.yml` runs it for every new o4
+  release, runs the checks against the new runtime, and publishes the SDK
+  release only if they pass.
+- `crates/o4-agent-sdk/build.rs` downloads the pinned runtime (with `curl`),
+  refuses it unless its checksum matches, and embeds it gzip-compressed.
+  `src/bundled.rs` unpacks it into a private cache folder named after its
+  checksum and checks it again before it runs. The `bundled-runtime` feature
+  (on by default) turns this off.
 - The default requirement `>=0.0.57, <1.0.0` is compiled in as
   `DEFAULT_RUNTIME_VERSION_REQUIREMENT`. It must equal
   `runtime_version_requirement` in `compatibility.toml`; nothing generates one
   from the other, so `compatibility_pin_matches_compiled_default` guards it.
-- Bump the SDK version only on public-API or protocol change. Re-pin the
-  runtime only after verifying against a newer `o4-agent-runtime`.
+- Raise the patch version for a new carried runtime (the release workflow
+  does), and the minor version for a public-API or protocol change.
 
 ## Building and testing
 
@@ -92,11 +103,12 @@ cargo clippy --workspace --all-targets -- -D warnings
   that its links work once installed, and that every public SDK name appears
   in the guides. Adding a public method means documenting it in
   `skills/o4-agent-sdk/`.
-- End-to-end tests exercise the real runtime binary; point them at it with
-  `O4_AGENT_RUNTIME_BIN=/path/to/o4-agent-runtime`. These must pass (not skip)
-  before any release.
-- `scripts/run-examples.sh /path/to/o4-agent-runtime` runs every example
-  against that runtime with its built-in offline test model
+- End-to-end tests exercise the real runtime binary: the carried one, or
+  another named by `O4_AGENT_RUNTIME_BIN=/path/to/o4-agent-runtime`. These must
+  pass (not skip) before any release.
+- `scripts/run-examples.sh [/path/to/o4-agent-runtime]` runs every example
+  against the carried runtime, or the one named, with its built-in offline
+  test model
   (`open4rena-smoke:open4rena-usage-smoke`); it needs `python3` but no
   provider account. A new example needs a check in that script.
 
@@ -106,10 +118,10 @@ Run all four gates before committing code changes. Clippy runs with
 CI (`.github/workflows/ci.yml`) runs the gates on every push and pull
 request, and runs the end-to-end tests, the examples and an
 `o4 plugin install` of the skill against the published o4 release named by
-`runtime_version` in `compatibility.toml`. Re-pinning that version re-points
-CI; also replace `.github/runtime-checksums.txt` with the new release's
-checksums, or CI refuses the download. Keep the workflow's actions pinned to
-full commit SHAs.
+`runtime_version` in `compatibility.toml`, which is also the runtime the SDK
+carries. `scripts/repin-runtime.sh` keeps `.github/runtime-checksums.txt` in
+step; CI refuses a download that does not match it. Keep the workflows'
+actions pinned to full commit SHAs.
 
 Runtimes 0.3.21 to 0.3.38 sometimes send an approval event out of order, so
 an approval run fails with "event sequence N is not greater than previous

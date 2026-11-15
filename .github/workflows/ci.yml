@@ -44,6 +44,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Without the built-in runtime, for platforms o4 has no runtime for.
+      - run: cargo clippy --workspace --all-targets --locked --no-default-features -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       # The README, docs/ and skill guides; --all-targets skips doctests.
       - run: cargo test --workspace --doc --locked
@@ -131,13 +133,15 @@ jobs:
           fi
           # Each test above is a real run against the runtime; zero tests
           # passing would also show no skips. Update the count with the tests.
-          grep -q "test result: ok. 5 passed" "$RUNNER_TEMP/e2e.log" || {
-            echo "expected all 5 end-to-end tests to pass" >&2
+          grep -q "test result: ok. 6 passed" "$RUNNER_TEMP/e2e.log" || {
+            echo "expected all 6 end-to-end tests to pass" >&2
             exit 1
           }
 
+      # With no path, the examples run the runtime built into the SDK, as an
+      # application using LocalRuntime::bundled() does.
       - name: Run every example
-        run: scripts/run-examples.sh "$O4_AGENT_RUNTIME_BIN"
+        run: env -u O4_AGENT_RUNTIME_BIN scripts/run-examples.sh
 
       - name: Install the skill with o4
         run: |

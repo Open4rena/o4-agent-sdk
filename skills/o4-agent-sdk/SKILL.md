@@ -17,9 +17,9 @@ Use the supplied task and conversation context. If no task was supplied, ask wha
 
 ## Start with the user's application
 
-1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.5.0**. Do not upgrade or change the runtime pin without approval.
+1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.6.0**. Do not upgrade the SDK or change which runtime it uses without approval.
 2. Establish the task: a single job, a continuing conversation, a user-facing stream, external tools, a monitoring UI, or a custom connection. Ask only for missing decisions that affect implementation.
-3. Establish the runtime executable's real path, model/provider setup, workspace, and state directory. `LocalRuntime` does **not** search `PATH` for a bare executable name.
+3. Establish which runtime the application uses: the one built into the SDK (`LocalRuntime::bundled()`, the default), or an executable path given to `LocalRuntime::new`, which does **not** search `PATH` for a bare name. Then the model/provider setup, workspace, and state directory.
 4. Agree on file/process/network permissions and whether a human must approve actions. Do not silently widen policy, disable the sandbox, enable unattended approval, or add unrequested providers/MCP servers.
 5. Read the relevant bundled guides below, implement the smallest supported path, and verify it in the user's application.
 
@@ -50,11 +50,11 @@ The SDK repository has a complete program for each common application. The SDK's
 | Give a session tools from an MCP server, with a minimal tool list | [`mcp_tools.rs`](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/mcp_tools.rs) |
 | A person approves each file change before it happens | [`human_approval.rs`](https://github.com/Open4rena/o4-agent-sdk/blob/main/crates/o4-agent-sdk/examples/human_approval.rs) |
 
-Each runs with `cargo run -p o4-agent-sdk --example <name> -- <path-to-o4-agent-runtime> <model> ...` from an SDK checkout. With the offline test model `open4rena-smoke:open4rena-usage-smoke`, they run without a provider account (see the runtime guide). The examples on `main` can be newer than the SDK version an application uses; check the API against its pinned version.
+Each runs with `cargo run -p o4-agent-sdk --example <name> -- <model> ...` from an SDK checkout, using the runtime built into the SDK (`O4_AGENT_RUNTIME_BIN` names another). With the offline test model `open4rena-smoke:open4rena-usage-smoke`, they run without a provider account (see the runtime guide). The examples on `main` can be newer than the SDK version an application uses; check the API against its pinned version.
 
 ## Rules that prevent broken integrations
 
-- **Use a published SDK tag and runtime download.** The Rust dependency and runtime binary are separate artifacts. Public users do not need access to o4's private source repository.
+- **Use a published SDK tag.** Each tag carries the runtime it was tested with: `LocalRuntime::bundled()` runs it, and `BUNDLED_RUNTIME_VERSION` names it. The build downloads it from the public o4 release and checks its checksum; `Error::BundledRuntimeUnavailable` means this platform or build has none, so use `LocalRuntime::new(path)` with a published runtime download instead. Public users do not need access to o4's private source repository.
 - **Keep all three compatibility checks.** Protocol version, runtime semver, and advertised capabilities are separate checks. The default accepted runtime range is `>=0.0.57, <1.0.0`; `0.3.21` is the recorded verified runtime, not a promise that every optional feature works on every accepted version.
 - **Require what the application needs.** Check `runtime_info().capabilities` or use `ClientOptions::require_capability`. Do not hide a missing feature by weakening requirements. Capability-gated methods also reject unsupported calls themselves.
 - **A tool list replaces the defaults.** A non-empty `allowed_tools` gives the session only the listed tools; MCP tools must be listed as `<server>__<tool>`. A stdio MCP server runs outside the sandbox, so configure only trusted servers. Sub-agents whose definition sets no permission mode, including the built-in `General` agent, ignore the session's tool lists and approvals, so leave out `agent` when those matter. See the permissions guide.
@@ -92,6 +92,6 @@ The public `protocol` module also contains wire-only question-answer, run-drain,
 
 - Compile against the user's pinned SDK, not an assumed latest API. Use only dependencies present in the application or explicitly add the ones required by the chosen example.
 - Test routing, final status, limits, cancellation races, missing capabilities, malformed output, cleanup, and approvals as appropriate. A fake transport needs no provider key; real-runtime tests and real-provider tests are different checks.
-- For SDK-repository changes, use `cargo fmt --all -- --check`, `cargo test --workspace --all-targets`, `cargo test --workspace --doc`, and `cargo clippy --workspace --all-targets -- -D warnings`; with a runtime, also `scripts/run-examples.sh <path-to-o4-agent-runtime>`.
+- For SDK-repository changes, use `cargo fmt --all -- --check`, `cargo test --workspace --all-targets`, `cargo test --workspace --doc`, and `cargo clippy --workspace --all-targets -- -D warnings`; also `scripts/run-examples.sh`.
 - Verify a real runtime handshake when available. Do not count a skipped test as runtime verification, or compilation as proof an MCP server or provider works.
 - Report what was checked and any untested runtime/provider-dependent behavior. Do not commit, publish, install services, spend provider credits, or change permission policy without the user's authorization.
