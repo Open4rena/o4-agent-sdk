@@ -53,17 +53,17 @@ passes these checks usually works, but is not verified.
 
 ## Moving to a new runtime
 
-`.github/workflows/runtime-release.yml` does this for every new o4 release:
-it runs `scripts/repin-runtime.sh <version> <commit>`, builds the SDK with the
-new runtime, runs the full checks, the end-to-end tests and every example
-against it, and only then raises the patch version, tags and publishes the SDK
-release. If any check fails, nothing is released and the run fails, so a
-runtime that breaks the SDK is caught the day it ships.
-
-To do it by hand:
+This is the last step of every o4 release:
 
 ```bash
 scripts/repin-runtime.sh 0.4.35 <o4 commit tagged v0.4.35>
 ```
 
-then run the checks in [AGENTS.md](AGENTS.md).
+It pins the new runtime and its checksums and raises the SDK's patch version
+(0.6.0 -> 0.6.1) everywhere it is named. A version not tagged yet, such as a
+minor raise waiting for its release, is kept. The change then goes through a
+pull request. CI builds the SDK with the new runtime and runs the full checks,
+the end-to-end tests and every example against it on Linux and macOS. Only
+once that passes and the pull request is merged is the merge commit tagged
+`v<SDK version>`, which is the SDK release. If a check fails, nothing is
+released, so a runtime that breaks the SDK is caught the day it ships.
