@@ -7,16 +7,34 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The o4-agent-runtime this SDK release was tested with, built into the
+# library. `LocalRuntime::bundled()` unpacks and runs it. The build downloads
+# it once from the o4 release named in compatibility.toml and checks it
+# against the checksum recorded there. Turn it off with
+# `default-features = false` to supply your own runtime path instead.
+default = ["bundled-runtime"]
+bundled-runtime = ["dep:flate2", "dep:sha2"]
+
 [dependencies]
 async-trait.workspace = true
+flate2 = { workspace = true, optional = true }
 futures-core.workspace = true
 o4-agent-protocol = { path = "../o4-agent-protocol" }
 semver.workspace = true
 serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 
+[build-dependencies]
+flate2.workspace = true
+sha2.workspace = true
+tar.workspace = true
+
 [dev-dependencies]
+flate2.workspace = true
 serde.workspace = true
+sha2.workspace = true
 tempfile = "3"

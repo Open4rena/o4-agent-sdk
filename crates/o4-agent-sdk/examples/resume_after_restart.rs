@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo run -p o4-agent-sdk --example resume_after_restart -- \
-//!     <path-to-o4-agent-runtime> <model> <state-dir> [prompt...]
+//!     <model> <state-dir> [prompt...]
 //! ```
 //!
 //! The first run starts a conversation in the current directory and saves its
@@ -23,19 +23,21 @@ use o4_agent_sdk::{Client, LocalRuntime, ResumeOptions, RunStatus, Session, Sess
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let usage =
-        "usage: resume_after_restart <path-to-o4-agent-runtime> <model> <state-dir> [prompt...]";
+    let usage = "usage: resume_after_restart <model> <state-dir> [prompt...]";
     let mut args = env::args().skip(1);
-    let runtime = args.next().ok_or(usage)?;
     let model = args.next().ok_or(usage)?;
     let state = PathBuf::from(args.next().ok_or(usage)?);
     let prompt = args.collect::<Vec<_>>().join(" ");
     fs::create_dir_all(&state)?;
 
+    // The runtime built into the SDK, or the one O4_AGENT_RUNTIME_BIN names.
+    let runtime = match env::var_os("O4_AGENT_RUNTIME_BIN") {
+        Some(path) => LocalRuntime::new(path),
+        None => LocalRuntime::bundled()?,
+    };
     // Keep the runtime's saved sessions with the application's own state:
     // they must survive restarts, and they stay out of the default `~/.o4`.
-    let client =
-        Client::connect(LocalRuntime::new(runtime).data_dir(state.join("runtime"))).await?;
+    let client = Client::connect(runtime.data_dir(state.join("runtime"))).await?;
     let outcome = take_turn(&client, &model, &state.join("session-id"), prompt).await;
     let shutdown = client.shutdown().await;
     let output = outcome?;

@@ -5,13 +5,17 @@ use o4_agent_sdk::{Client, LocalRuntime, ResumeOptions, SessionOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let usage = "usage: persistent <path-to-o4-agent-runtime> <model>";
+    let usage = "usage: persistent <model>";
     let mut args = env::args().skip(1);
-    let runtime = args.next().ok_or(usage)?;
     let model = args.next().ok_or(usage)?;
     let cwd = env::current_dir()?;
 
-    let client = Client::connect(LocalRuntime::new(runtime)).await?;
+    // The runtime built into the SDK, or the one O4_AGENT_RUNTIME_BIN names.
+    let runtime = match env::var_os("O4_AGENT_RUNTIME_BIN") {
+        Some(path) => LocalRuntime::new(path),
+        None => LocalRuntime::bundled()?,
+    };
+    let client = Client::connect(runtime).await?;
     let outcome = conversation(&client, &model, &cwd).await;
     // Stop the runtime whether or not the conversation worked.
     let shutdown = client.shutdown().await;

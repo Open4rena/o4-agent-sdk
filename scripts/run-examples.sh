@@ -2,7 +2,10 @@
 # Run every SDK example against a real o4-agent-runtime, with no provider
 # account or API key.
 #
-#   scripts/run-examples.sh /path/to/o4-agent-runtime
+#   scripts/run-examples.sh [/path/to/o4-agent-runtime]
+#
+# Without a path the examples run the runtime built into the SDK
+# (LocalRuntime::bundled()); with one they run that binary instead.
 #
 # The examples use the runtime's built-in offline test model,
 # open4rena-smoke:open4rena-usage-smoke. It answers fixed test prompts
@@ -14,12 +17,15 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 /path/to/o4-agent-runtime" >&2
+if [[ $# -gt 1 ]]; then
+  echo "usage: $0 [/path/to/o4-agent-runtime]" >&2
   exit 2
 fi
-runtime="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-[[ -x "$runtime" ]] || { echo "not an executable file: $1" >&2; exit 2; }
+runtime=""
+if [[ $# -eq 1 ]]; then
+  runtime="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  [[ -x "$runtime" ]] || { echo "not an executable file: $1" >&2; exit 2; }
+fi
 # An example reads input only where a check below supplies it.
 exec </dev/null
 
@@ -69,11 +75,13 @@ supervise='
 
 # run <timeout-seconds> <directory> <example> [args...]: the output goes to
 # $log. A minimal environment keeps API keys and settings from leaking in.
+# The bundled runtime unpacks into the scratch HOME's cache folder.
 run() {
   local seconds="$1" dir="$2" example="$3"
   shift 3
   (cd "$dir" && env -i PATH="$PATH" HOME="$scratch/home" TMPDIR="$scratch/tmp" LANG=C.UTF-8 \
-    perl -e "$supervise" "$seconds" "$bin/$example" "$runtime" "$@") >"$log" 2>&1
+    ${runtime:+"O4_AGENT_RUNTIME_BIN=$runtime"} \
+    perl -e "$supervise" "$seconds" "$bin/$example" "$@") >"$log" 2>&1
 }
 
 pass() { echo "ok      $1"; }

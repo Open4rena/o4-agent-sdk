@@ -47,6 +47,9 @@ pub enum Error {
     #[error("runtime executable path is invalid: {path} ({reason})")]
     InvalidRuntimePath { path: PathBuf, reason: String },
 
+    #[error("the runtime built into this SDK is unavailable: {reason}")]
+    BundledRuntimeUnavailable { reason: String },
+
     #[error("working directory is invalid: {path} ({reason})")]
     InvalidWorkingDirectory { path: PathBuf, reason: String },
 

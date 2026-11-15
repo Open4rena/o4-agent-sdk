@@ -5,16 +5,16 @@
 //! and capability negotiation, session lifecycle, and error handling against
 //! the actual runtime process. They do not contact an LLM provider.
 //!
-//! The runtime binary path is resolved from `O4_AGENT_RUNTIME_BIN`, falling
-//! back to the shared cargo target dir. Tests skip (rather than fail) when no
-//! binary is available so CI environments without the runtime can still run
-//! the pure-SDK suites.
+//! The runtime is the one built into the SDK (`LocalRuntime::bundled()`), so
+//! these tests run wherever o4 publishes a runtime. `O4_AGENT_RUNTIME_BIN`
+//! points them at another binary instead, such as an unreleased build. They
+//! skip (rather than fail) only on a platform with no runtime.
 
 use std::path::PathBuf;
 
 use o4_agent_sdk::{
     Client, ClientOptions, Error, Event, ExecutionPolicy, LocalRuntime, ResumeOptions, RunStatus,
-    SandboxMode, SessionOptions,
+    SandboxMode, SessionOptions, BUNDLED_RUNTIME_VERSION,
 };
 
 /// Locate the runtime binary, or return None to skip.
@@ -23,9 +23,30 @@ fn runtime_binary() -> Option<PathBuf> {
         let path = PathBuf::from(path);
         return path.exists().then_some(path);
     }
-    let home = std::env::var("HOME").ok()?;
-    let candidate = PathBuf::from(home).join(".cache/cargo-target/debug/o4-agent-runtime");
-    candidate.exists().then_some(candidate)
+    LocalRuntime::bundled()
+        .ok()
+        .map(|runtime| runtime.path().to_owned())
+}
+
+/// The runtime built into the SDK starts, and is the release it is pinned to.
+#[tokio::test]
+async fn the_bundled_runtime_is_the_pinned_release() {
+    let runtime = match LocalRuntime::bundled() {
+        Ok(runtime) => runtime,
+        Err(Error::BundledRuntimeUnavailable { reason }) => {
+            eprintln!("skipping: {reason}");
+            return;
+        }
+        Err(error) => panic!("bundled runtime failed: {error}"),
+    };
+    let client = Client::connect(runtime)
+        .await
+        .expect("connect to bundled runtime");
+    assert_eq!(
+        client.runtime_info().runtime_version.to_string(),
+        BUNDLED_RUNTIME_VERSION
+    );
+    client.shutdown().await.expect("shutdown");
 }
 
 async fn connect() -> Option<Client> {

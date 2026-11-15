@@ -2,7 +2,7 @@
 
 The o4 Agent SDK is a standalone async Rust library for controlling o4 programmatically. It spawns and drives the real `o4-agent-runtime` process over a versioned, line-delimited JSON (JSONL) protocol -- the same agent loop, tools, session persistence, MCP integration, and execution controls that power the interactive CLI.
 
-The SDK is a **control plane**, not an agent. It does not implement an agent loop, call model providers, or bundle the runtime. Your application links the SDK; the SDK spawns and talks to the `o4-agent-runtime` binary.
+The SDK is a **control plane**, not an agent. It does not implement an agent loop or call model providers. Your application links the SDK; the SDK spawns and talks to the `o4-agent-runtime` binary. Each SDK release carries the runtime it was tested with, built in, and `LocalRuntime::bundled()` runs it.
 
 ## When to use the SDK
 
@@ -46,14 +46,39 @@ Add the SDK as a dependency, referenced by git tag.
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.5.0" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.0" }
 tokio = { version = "1", features = ["full"] }
 ```
 
-You also need the `o4-agent-runtime` binary. Every o4 release from 0.3.21 on publishes it next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum, for `linux-x86_64`, `linux-arm64` and `macos-arm64`. The Linux builds are static and run on any distribution. Pick a version inside the SDK's accepted range (see [Compatibility](#compatibility)):
+The SDK carries the o4 runtime it was tested with. Building it downloads `o4-agent-runtime-<platform>.tar.gz` from the o4 release pinned in `compatibility.toml` (once; later builds reuse the download), refuses it unless its SHA-256 matches the one recorded there, and builds the binary into your program, compressed (about 15 MB). Connect to it with `LocalRuntime::bundled()`:
+
+```rust,no_run
+use o4_agent_sdk::{Client, LocalRuntime, BUNDLED_RUNTIME_VERSION};
+
+# async fn connect() -> o4_agent_sdk::Result<()> {
+let client = Client::connect(LocalRuntime::bundled()?).await?;
+assert_eq!(client.runtime_info().runtime_version.to_string(), BUNDLED_RUNTIME_VERSION);
+# client.shutdown().await
+# }
+```
+
+The first `LocalRuntime::bundled()` in a process unpacks the runtime into the user's cache folder: `~/Library/Caches/o4-agent-sdk` on macOS, `$XDG_CACHE_HOME/o4-agent-sdk` or `~/.cache/o4-agent-sdk` on Linux, or `O4_AGENT_SDK_CACHE_DIR` when set. It goes into a folder named after its checksum, readable only by you, and is checked again before it is first used in a process; a copy that was replaced or edited is unpacked again rather than run. It returns `Error::BundledRuntimeUnavailable` when the platform has no o4 runtime or the cache folder cannot be written.
+
+The runtime is published for `linux-x86_64`, `linux-arm64` and `macos-arm64`. On any other platform the SDK still builds, with a warning, and `LocalRuntime::bundled()` returns that error.
+
+### Using another runtime
+
+`LocalRuntime::new(path)` runs a runtime you supply, as before, such as an o4 release other than the one carried. Build without the carried runtime with:
+
+```toml
+[dependencies]
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.0", default-features = false }
+```
+
+Every o4 release from 0.3.21 on publishes the runtime next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum:
 
 ```bash
-VERSION=0.4.14
+VERSION=0.4.34
 PLATFORM=linux-x86_64
 BASE=https://github.com/Open4rena/o4-releases/releases/download/v${VERSION}
 curl -fsSLO "${BASE}/o4-agent-runtime-${PLATFORM}.tar.gz"
@@ -62,9 +87,17 @@ sha256sum -c "o4-agent-runtime-${PLATFORM}.tar.gz.sha256"   # shasum -a 256 -c o
 tar -xzf "o4-agent-runtime-${PLATFORM}.tar.gz"               # extracts ./o4-agent-runtime
 ```
 
-The archive contains only the `o4-agent-runtime` binary. It takes no arguments and needs no `o4` CLI on the machine.
+The archive contains only the `o4-agent-runtime` binary. It takes no arguments and needs no `o4` CLI on the machine. The SDK's own end-to-end tests run the carried runtime, or the one named by the `O4_AGENT_RUNTIME_BIN` environment variable.
 
-Point the SDK at the binary by passing its path to `LocalRuntime::new(...)`. The SDK's own end-to-end tests resolve it from the `O4_AGENT_RUNTIME_BIN` environment variable, which is a convenient convention to adopt in your code.
+### Offline builds
+
+The build needs `curl` and access to github.com once. Without them, download the pinned archive on another machine (the `VERSION` above, which is `runtime_version` in `compatibility.toml`) and point the build at it:
+
+```bash
+O4_AGENT_SDK_RUNTIME_ARCHIVE=/path/to/o4-agent-runtime-linux-x86_64.tar.gz cargo build
+```
+
+The archive must still match the recorded checksum. `O4_AGENT_SDK_CACHE_DIR` also sets where the build keeps its download.
 
 ### Running the runtime on a server
 
@@ -303,8 +336,8 @@ Compatibility is enforced at connect time on three axes:
 The SDK pins the exact runtime it was built and verified against in `compatibility.toml`:
 
 ```toml
-runtime_commit = "8a8768a7c28f2e81926248a5c9ac12c4b073f90b"
-runtime_version = "0.4.14"
+runtime_commit = "733af9aacbc8776f54dd039949db8861b694b480"
+runtime_version = "0.4.34"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
@@ -362,9 +395,9 @@ cargo test --workspace --doc      # compiles the Rust code in these docs
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The end-to-end tests exercise the real runtime binary (set `O4_AGENT_RUNTIME_BIN`). They cover the handshake and capabilities, session create and close, a session resumed by a second runtime process, and rejection of an invalid working directory.
+The end-to-end tests exercise the real runtime binary: the one built into the SDK, or the one `O4_AGENT_RUNTIME_BIN` names. They cover the built-in runtime being the pinned release, the handshake and capabilities, session create and close, a session resumed by a second runtime process, and rejection of an invalid working directory.
 
-`scripts/run-examples.sh /path/to/o4-agent-runtime` runs every example against a real runtime with its built-in offline test model, so it needs no provider account: one-shot and persistent sessions, a schema run, live progress, resuming after a restart, an MCP server, and approving and refusing a file write. CI runs it against the published runtime.
+`scripts/run-examples.sh` runs every example against the runtime built into the SDK (or the one given as its argument) with the runtime's built-in offline test model, so it needs no provider account: one-shot and persistent sessions, a schema run, live progress, resuming after a restart, an MCP server, and approving and refusing a file write. CI runs it on Linux and macOS.
 
 ## Security notes
 
