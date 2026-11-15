@@ -70,9 +70,10 @@ release produces an SDK release (a patch version) carrying it. Read and follow
   `runtime_commit`, and the `[runtime_archive_sha256]` table the build checks
   each download against. `scripts/repin-runtime.sh <version> <commit>`
   rewrites them, `.github/runtime-checksums.txt`, and the docs that name the
-  version; `.github/workflows/runtime-release.yml` runs it for every new o4
-  release, runs the checks against the new runtime, and publishes the SDK
-  release only if they pass.
+  version, and raises the SDK's patch version when the current one is
+  already tagged. It is run as the last step of every o4 release; the change
+  goes through a pull request, and the merge commit is tagged
+  `v<SDK version>` only after CI passes against the new runtime.
 - `crates/o4-agent-sdk/build.rs` downloads the pinned runtime (with `curl`),
   refuses it unless its checksum matches, and embeds it gzip-compressed.
   `src/bundled.rs` unpacks it into a private cache folder named after its
@@ -82,8 +83,11 @@ release produces an SDK release (a patch version) carrying it. Read and follow
   `DEFAULT_RUNTIME_VERSION_REQUIREMENT`. It must equal
   `runtime_version_requirement` in `compatibility.toml`; nothing generates one
   from the other, so `compatibility_pin_matches_compiled_default` guards it.
-- Raise the patch version for a new carried runtime (the release workflow
+- Raise the patch version for a new carried runtime (`repin-runtime.sh`
   does), and the minor version for a public-API or protocol change.
+- A release is an annotated tag on the merge commit in `main`, named
+  `v<SDK version>`, with the message `o4-agent-sdk <version>: <what changed>,
+  runtime <o4 version>`. Never move a pushed tag.
 
 ## Building and testing
 

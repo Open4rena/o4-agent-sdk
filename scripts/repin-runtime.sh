@@ -9,6 +9,12 @@
 # version in README.md, VERSIONING.md and docs/agent-sdk.md. The checksums
 # come from the release's own .sha256 files. Nothing is committed.
 #
+# A new runtime is a new SDK release, so when the runtime changes and the
+# SDK's current version is already tagged, the SDK's patch version goes up
+# too (0.6.0 -> 0.6.1), in Cargo.toml, Cargo.lock and the docs and guides
+# that name it. A version not tagged yet (a minor raise waiting for its
+# release) is kept.
+#
 # Run the full checks afterwards; the bundled runtime is the new release from
 # the next build on.
 
@@ -47,12 +53,25 @@ cli_macos_arm="$(checksum o4-macos-arm64.tar.gz)"
 old="$(sed -n 's/^runtime_version = "\(.*\)"$/\1/p' "$repo/compatibility.toml")"
 [[ -n "$old" ]] || { echo "no runtime_version in compatibility.toml" >&2; exit 1; }
 
+sdk_old="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$repo/Cargo.toml" | head -n 1)"
+[[ "$sdk_old" =~ ^([0-9]+\.[0-9]+)\.([0-9]+)$ ]] || { echo "no SDK version in Cargo.toml" >&2; exit 1; }
+sdk_next="${BASH_REMATCH[1]}.$((BASH_REMATCH[2] + 1))"
+sdk_new="$sdk_old"
+if [[ "$old" != "$version" ]]; then
+  # The published tags decide, not a local copy that may be out of date.
+  tags="$(git -C "$repo" ls-remote --tags origin "refs/tags/v${sdk_old}")" || {
+    echo "cannot list the SDK's tags on origin" >&2
+    exit 1
+  }
+  [[ -z "$tags" ]] || sdk_new="$sdk_next"
+fi
+
 python3 - "$repo" "$old" "$version" "$commit" \
   "$runtime_linux_x86" "$runtime_linux_arm" "$runtime_macos_arm" \
-  "$cli_linux_x86" "$cli_macos_arm" <<'PY'
+  "$cli_linux_x86" "$cli_macos_arm" "$sdk_old" "$sdk_new" <<'PY'
 import pathlib, re, sys
 
-repo, old, new, commit, rt_x86, rt_arm, rt_mac, cli_x86, cli_mac = sys.argv[1:]
+repo, old, new, commit, rt_x86, rt_arm, rt_mac, cli_x86, cli_mac, sdk_old, sdk_new = sys.argv[1:]
 repo = pathlib.Path(repo)
 
 def rewrite(path, change):
@@ -103,5 +122,39 @@ for path, changes in docs.items():
             text = re.sub(pattern, replacement, text)
         return text
     rewrite(path, change)
+
+if sdk_new != sdk_old:
+    o, n = re.escape(sdk_old), sdk_new
+    def manifest(text):
+        return re.sub(r'(?ms)^(\[workspace\.package\]\n(?:[^\[].*\n)*?)version = "' + o + '"',
+                      lambda m: f'{m.group(1)}version = "{n}"', text, count=1)
+    def lock(text):
+        return re.sub(r'(?m)^(name = "o4-agent-(?:sdk|protocol)"\n)version = "' + o + '"$',
+                      lambda m: f'{m.group(1)}version = "{n}"', text)
+    for path, change in (("Cargo.toml", manifest), ("Cargo.lock", lock)):
+        file = repo / path
+        text = file.read_text()
+        updated = change(text)
+        if updated == text:
+            sys.exit(f"{path}: SDK version {sdk_old} not found")
+        file.write_text(updated)
+    # Only the forms that name the SDK's current version; "upgrading from
+    # v0.5.x" and the "0.6.0 -> 0.6.1" example stay as they are.
+    forms = [
+        (rf'tag = "v{o}"', f'tag = "v{n}"'),
+        (rf"SDK v{o}\b", f"SDK v{n}"),
+        (rf"SDK \*\*v{o}\*\*", f"SDK **v{n}**"),
+        (rf"pinned to `v{o}`", f"pinned to `v{n}`"),
+        (rf"currently `{o}`", f"currently `{n}`"),
+    ]
+    paths = ["README.md", "VERSIONING.md", "docs/agent-sdk.md",
+             *sorted(str(p.relative_to(repo)) for p in (repo / "skills").rglob("*.md"))]
+    for path in paths:
+        file = repo / path
+        text = file.read_text()
+        for pattern, replacement in forms:
+            text = re.sub(pattern, replacement, text)
+        file.write_text(text)
+    print(f"SDK version {sdk_new} (was {sdk_old})")
 print(f"pinned o4 {new} (was {old})")
 PY
