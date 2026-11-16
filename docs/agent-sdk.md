@@ -46,7 +46,7 @@ Add the SDK as a dependency, referenced by git tag.
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.2" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.3" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -72,13 +72,13 @@ The runtime is published for `linux-x86_64`, `linux-arm64` and `macos-arm64`. On
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.2", default-features = false }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk.git", tag = "v0.6.3", default-features = false }
 ```
 
 Every o4 release from 0.3.21 on publishes the runtime next to the CLI on [GitHub Releases](https://github.com/Open4rena/o4-releases), as `o4-agent-runtime-<platform>.tar.gz` with a `.sha256` checksum:
 
 ```bash
-VERSION=0.4.36
+VERSION=0.4.37
 PLATFORM=linux-x86_64
 BASE=https://github.com/Open4rena/o4-releases/releases/download/v${VERSION}
 curl -fsSLO "${BASE}/o4-agent-runtime-${PLATFORM}.tar.gz"
@@ -336,8 +336,8 @@ Compatibility is enforced at connect time on three axes:
 The SDK pins the exact runtime it was built and verified against in `compatibility.toml`:
 
 ```toml
-runtime_commit = "2f918c618aef34d8b5d35ca0909e4f8cef88bbed"
-runtime_version = "0.4.36"
+runtime_commit = "f0f4f4f809b84e07042d9125fd7458b3bf2fe850"
+runtime_version = "0.4.37"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 ```
