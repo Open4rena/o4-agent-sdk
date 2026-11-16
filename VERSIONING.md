@@ -8,7 +8,7 @@ their CLI.
 
 ## Two version numbers
 
-The SDK's own version (this workspace, currently `0.6.3`) follows the SDK's
+The SDK's own version (this workspace, currently `0.6.4`) follows the SDK's
 public API, not o4's version number:
 
 - **Patch** (0.6.0 -> 0.6.1): only the carried runtime changed. This is the
@@ -23,7 +23,7 @@ which o4 release it carries.
 
 ```toml
 runtime_commit = "<o4 repo commit providing o4-agent-runtime>"
-runtime_version = "0.4.37"
+runtime_version = "0.4.38"
 protocol_version = 1
 runtime_version_requirement = ">=0.0.57, <1.0.0"
 
