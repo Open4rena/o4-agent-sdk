@@ -1,6 +1,6 @@
 # Runtime setup, deployment, custom transports, and troubleshooting
 
-Applies to o4 Agent SDK v0.6.4. This is a Rust async library controlling a separate process, not a provider client. Each release carries the runtime it was tested with.
+Applies to o4 Agent SDK v0.6.5. This is a Rust async library controlling a separate process, not a provider client. Each release carries the runtime it was tested with.
 
 ## Install the two artifacts
 
@@ -8,7 +8,7 @@ Use Rust 1.88+ and a published SDK tag. For a new application:
 
 ```toml
 [dependencies]
-o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.6.4" }
+o4-agent-sdk = { git = "https://github.com/Open4rena/o4-agent-sdk", tag = "v0.6.5" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 ```
 
