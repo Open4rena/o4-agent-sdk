@@ -7,8 +7,8 @@
 #   curl -fsSL <release>/<archive>.sha256
 # The release must match the version line below.
 #
-# version 0.4.41
-d69bf0f1210af488b6f857753140f49dfd8c92db9af8230f434c81c40953d32f  o4-agent-runtime-linux-x86_64.tar.gz
-21e395231a9098eaf83db06c4e385e5d5a56fd9ecef01c8ca0bd67f44949b228  o4-agent-runtime-macos-arm64.tar.gz
-3d10149df5d669d2325619480850d6ff08db8d8dfbd15d3d359e62bf0ceb7ea3  o4-linux-x86_64.tar.gz
-718540fb50b184850b9facfe5f24fdb6b5e2a9fe55dcb9c74df4972b933d2c6e  o4-macos-arm64.tar.gz
+# version 0.4.42
+5eef141fb4a6d59c611462ad3bdf0d9edc176e587e321e019ef774e86e59fea5  o4-agent-runtime-linux-x86_64.tar.gz
+69fd5ec6f71aa69f30cc08d2af15a30ce8e57752bf6dc3196d86d174a0ccfc75  o4-agent-runtime-macos-arm64.tar.gz
+9eca5e44972e6ad2aa511ec2b9d3d8f66bf1e651d5f5b2a02e06db84ec77932d  o4-linux-x86_64.tar.gz
+5a17eeb015cb994fa8f1b8405b3a888f8cb6407de05da7b41ddb79734120c8b0  o4-macos-arm64.tar.gz

@@ -5,14 +5,14 @@
 # and verified against. Update them deliberately when the runtime changes.
 
 # The o4 repository commit that provides the matching o4-agent-runtime binary.
-# This is the commit tagged v0.4.41, whose o4-agent-runtime-<platform>.tar.gz
-# is published at https://github.com/Open4rena/o4-releases/releases/tag/v0.4.41.
-runtime_commit = "be69e725e79a22198c4d5a84855f989131c21445"
+# This is the commit tagged v0.4.42, whose o4-agent-runtime-<platform>.tar.gz
+# is published at https://github.com/Open4rena/o4-releases/releases/tag/v0.4.42.
+runtime_commit = "c0119443251eae14db34c5504a9a4110ea879a9d"
 
 # The o4 runtime version at that commit. Building the SDK downloads this
 # release's o4-agent-runtime and builds it into the library; see
 # `LocalRuntime::bundled()`.
-runtime_version = "0.4.41"
+runtime_version = "0.4.42"
 
 # The JSONL wire protocol version implemented by both sides.
 protocol_version = 1
@@ -30,6 +30,6 @@ runtime_version_requirement = ">=0.0.57, <1.0.0"
 # release's own .sha256 files. The build refuses a download that does not
 # match. scripts/repin-runtime.sh rewrites this table.
 [runtime_archive_sha256]
-linux-x86_64 = "d69bf0f1210af488b6f857753140f49dfd8c92db9af8230f434c81c40953d32f"
-linux-arm64 = "1130682b70b4d99ea3d4f1db7532ddb7c2d0c381dad72719a48a1c3790086768"
-macos-arm64 = "21e395231a9098eaf83db06c4e385e5d5a56fd9ecef01c8ca0bd67f44949b228"
+linux-x86_64 = "5eef141fb4a6d59c611462ad3bdf0d9edc176e587e321e019ef774e86e59fea5"
+linux-arm64 = "740c56cb714bd58846e3b0608ff75f3c477571ce8aa2b5f35a7998f72cc6b41b"
+macos-arm64 = "69fd5ec6f71aa69f30cc08d2af15a30ce8e57752bf6dc3196d86d174a0ccfc75"
