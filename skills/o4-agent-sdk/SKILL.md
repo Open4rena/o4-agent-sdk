@@ -17,7 +17,7 @@ Use the supplied task and conversation context. If no task was supplied, ask wha
 
 ## Start with the user's application
 
-1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.6.11**. Do not upgrade the SDK or change which runtime it uses without approval.
+1. Inspect its Rust dependencies, existing integration, and tests before editing. Identify the SDK version actually in use; these guides describe SDK **v0.6.12**. Do not upgrade the SDK or change which runtime it uses without approval.
 2. Establish the task: a single job, a continuing conversation, a user-facing stream, external tools, a monitoring UI, or a custom connection. Ask only for missing decisions that affect implementation.
 3. Establish which runtime the application uses: the one built into the SDK (`LocalRuntime::bundled()`, the default), or an executable path given to `LocalRuntime::new`, which does **not** search `PATH` for a bare name. Then the model/provider setup, workspace, and state directory.
 4. Agree on file/process/network permissions and whether a human must approve actions. Do not silently widen policy, disable the sandbox, enable unattended approval, or add unrequested providers/MCP servers.
