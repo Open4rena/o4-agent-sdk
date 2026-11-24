@@ -207,7 +207,7 @@ checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
 name = "o4-agent-protocol"
-version = "0.6.20"
+version = "0.6.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "o4-agent-sdk"
-version = "0.6.20"
+version = "0.6.21"
 dependencies = [
  "async-trait",
  "flate2",
